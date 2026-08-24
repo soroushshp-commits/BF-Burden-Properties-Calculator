@@ -15,24 +15,42 @@ This application computes temperature-dependent effective thermophysical propert
 COMSOL Multiphysics and custom numerical transport models.
 """)
 
-# --- Helper Function for Paired Slider + Number Input ---
+# --- Helper Function for Compact Inline Number Input + Slider ---
 def paired_input(label, min_val, max_val, default_val, step, key, container=st.sidebar):
     if key not in st.session_state:
         st.session_state[key] = default_val
         
-    container.markdown(f"**{label}**")
-    col1, col2 = container.columns([3, 2])
-    
-    with col1:
-        s_val = container.slider(f"{label} slider", min_val, max_val, float(st.session_state[key]), step=step, key=f"s_{key}", label_visibility="collapsed")
-    with col2:
-        n_val = container.number_input(f"{label} number", min_val, max_val, float(st.session_state[key]), step=step, key=f"n_{key}", label_visibility="collapsed")
+    # Layout: Label + Compact Number Box in the same row, Slider below
+    col_label, col_input = container.columns([3, 1.2])
+    with col_label:
+        container.markdown(f"**{label}**")
+    with col_input:
+        n_val = container.number_input(
+            f"{label} num", 
+            min_value=float(min_val), 
+            max_value=float(max_val), 
+            value=float(st.session_state[key]), 
+            step=step, 
+            key=f"n_{key}", 
+            label_visibility="collapsed"
+        )
         
-    if s_val != st.session_state[key]:
+    s_val = container.slider(
+        f"{label} slider", 
+        min_value=float(min_val), 
+        max_value=float(max_val), 
+        value=float(n_val), 
+        step=step, 
+        key=f"s_{key}", 
+        label_visibility="collapsed"
+    )
+    
+    # Sync states
+    if s_val != st.session_state[key] and s_val != n_val:
         st.session_state[key] = s_val
     elif n_val != st.session_state[key]:
         st.session_state[key] = n_val
-        
+    
     return st.session_state[key]
 
 # --- Sidebar: Zone Selection ---
@@ -192,7 +210,7 @@ with col1:
     if "Deadman" in bf_zone:
         st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
     else:
-        st.metric(label=f"Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
+        st.metric(label="Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
     st.metric(label=f"Packed Bed Effective Conductivity (k_eff) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
