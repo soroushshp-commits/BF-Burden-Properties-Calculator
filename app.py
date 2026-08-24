@@ -10,9 +10,9 @@ st.set_page_config(
 st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Multiphase Pore Fluid & Coke Skeleton)")
 st.markdown("""
 **Model Architecture Updates:** 
-* **Multiphase Pore Fluid Mixture:** Pore fluid properties ($\rho_{fluid}, C_{p,fluid}, k_{fluid}, \mu_{fluid}$) use saturation-weighted averages. $C_{p,fluid}$ is strictly computed as a direct saturation-weighted sum of phase specific heats without density weighting.
+* **Strict Separation of $C_p$ and Density:** Specific heat capacity ($C_p$) is kept strictly independent of density for all solid, gas, and liquid melt phases.
+* **Multiphase Pore Fluid Mixture:** Pore fluid properties ($\rho_{fluid}, C_{p,fluid}, k_{fluid}, \mu_{fluid}$) use direct saturation-weighted averages.
 * **Temperature-Dependent Melts & Gas:** Full temperature coefficients ($A + B\cdot T$) enabled for liquid iron, liquid slag, and gas phases.
-* **Effective Sauter Diameter ($d_{p,eff}$):** Computed via volume-fraction-weighted harmonic mean of solid particles.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -212,8 +212,7 @@ def calculate_physics(T):
     # Mixture bulk density
     rho_bulk = total_mass / total_volume if total_volume > 0 else 0.0
 
-    # Effective solid properties (scalar scaling by [1 - phi])
-    cp_s_eff = cp_s * (1.0 - phi)
+    # Effective solid properties (scalar scaling by [1 - phi] for conductivity)
     ks_s_eff = ks_s * (1.0 - phi)
 
     # Effective Sauter Mean Diameter via Harmonic Mean of solid volume fractions
@@ -234,7 +233,7 @@ def calculate_physics(T):
     cp_slag = cp_slag_A + cp_slag_B * T
     k_slag = k_slag_A + k_slag_B * T
 
-    # Multiphase Pore Fluid Mixture Averaging (No density weighting on Cp)
+    # Multiphase Pore Fluid Mixture Averaging (Strict separation of Cp and Density)
     if is_deadman:
         rho_fluid = (s_gas * rho_g) + (s_iron * rho_iron) + (s_slag * rho_slag)
         cp_fluid = (s_gas * cp_g) + (s_iron * cp_iron) + (s_slag * cp_slag)
@@ -263,9 +262,9 @@ def calculate_physics(T):
         'rho_iron': (rho_iron_A, rho_iron_B), 'cp_iron': (cp_iron_A, cp_iron_B), 'k_iron': (k_iron_A, k_iron_B),
         'rho_slag': (rho_slag_A, rho_slag_B), 'cp_slag': (cp_slag_A, cp_slag_B), 'k_slag': (k_slag_A, k_slag_B)
     }
-    return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state), coeffs
+    return (cp_s, ks_s, rho_s, rho_bulk), (ks_s_eff,), (dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state), coeffs
 
-(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), fluid_interphase, coeffs = calculate_physics(temperature_k)
+(cp_s, ks_s, rho_s, rho_bulk), (ks_s_eff,), fluid_interphase, coeffs = calculate_physics(temperature_k)
 dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state = fluid_interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
@@ -280,12 +279,12 @@ st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K (Total Poro
 
 tab1, tab2, tab3 = st.tabs([
     "🟢 COMSOL LTNE: Solid Sub-Node", 
-    "🟠 COMSOL Solid Matrix (Coke Skeleton + Melts)",
+    "🟠 COMSOL Solid Matrix (Coke Skeleton)",
     "⚙️ Multiphase Pore Fluid Mixture Properties & Coupling"
 ])
 
 with tab1:
-    st.info("💡 **LTNE Solid Matrix.** Uses True Density and intrinsic solid skeletal properties (Coke).")
+    st.info("💡 **LTNE Solid Matrix.** Uses True Density and intrinsic solid skeletal specific heat ($C_p$) and conductivity ($k$) separately.")
     col1, col2, col3 = st.columns(3)
     col1.metric("True Density (ρ_s)", f"{rho_s:.2f} kg/m³")
     col2.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
@@ -297,23 +296,20 @@ with tab1:
 
 with tab2:
     if is_deadman:
-        st.info("💡 **Deadman Effective Matrix.** Includes coke skeleton scaling plus liquid iron and slag volumetric heat capacity contributions.")
+        st.info("💡 **Deadman Solid Matrix.** Uses coke skeleton True Density and pure specific heat ($C_p$) without density-multiplication.")
         col1, col2, col3 = st.columns(3)
         col1.metric("Bulk Density (ρ_bulk)", f"{rho_bulk:.2f} kg/m³")
         col2.metric("Iron Saturation (s_iron)", f"{s_iron:.2f}")
         col3.metric("Slag Saturation (s_slag)", f"{s_slag:.2f}")
-        
-        st.markdown("#### Deadman Effective Volumetric Heat Capacity Formulation")
-        st.latex(r"(\rho C_p)_{eff,deadman} = (1 - \phi)\rho_s C_{p,s}(T) + \phi \left[ s_{iron}\rho_{iron}C_{p,iron} + s_{slag}\rho_{slag}C_{p,slag} \right]")
     else:
-        st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Uses Bulk Density and properties scaled strictly by (1 - phi).")
+        st.info("💡 **Manual Solid Matrix.** Uses Bulk Density and solid properties scaled by $(1-\phi)$.")
         col1, col2, col3 = st.columns(3)
         col1.metric("Bulk Density (ρ_bulk)", f"{rho_bulk:.2f} kg/m³")
         col2.metric("Effective Conductivity (k_eff = k_s · [1-φ])", f"{ks_s_eff:.3f} W/(m·K)")
-        col3.metric("Effective Heat Capacity (Cp_eff = Cp_s · [1-φ])", f"{cp_s_eff:.2f} J/(kg·K)")
+        col3.metric("Solid Specific Heat (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
         
         st.markdown("#### Analytical Functions (T)")
-        st.latex(rf"C_{{p,eff}}(T) = (1 - {phi:.4f}) \cdot C_{{p,s}}(T)")
+        st.latex(rf"C_{{p,s}}(T) = {cp_A:.4f} + ({cp_B:.4e})T + ({cp_C:.4e})T^{{-2}}")
         st.latex(rf"k_{{eff}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
 
 with tab3:
@@ -360,7 +356,7 @@ Expression: {cp_slag_A:.2f} + ({cp_slag_B:.2f})*T
 [Analytic Function: Liquid Slag Conductivity k_slag(T)]
 Expression: {k_slag_A:.2f} + ({k_slag_B:.2f})*T
 
-[Mixture Fluid Property Expressions in Pores]
+[Mixture Fluid Property Expressions in Pores (Cp uncoupled from rho)]
 rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)
 Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)
 k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)
@@ -394,7 +390,7 @@ Expression: {kg_A:.6f} + ({kg_B:.6e})*T + ({kg_C:.6e})*T^2 + ({kg_D:.6e})*T^3
 rho_s = {rho_s:.2f} [kg/m^3]  // True density of coke skeleton
 porosity_phi = {phi:.4f}
 
-[Analytic Function: Solid Heat Capacity Cp_s(T)]
+[Analytic Function: Solid Specific Heat Cp_s(T) - Pure Mass Specific Heat]
 Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
 
 [Analytic Function: Solid Conductivity k_s(T)]
