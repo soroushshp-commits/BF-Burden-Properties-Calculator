@@ -107,7 +107,7 @@ for mat_name in ['coke', 'sinter', 'pellet', 'lump']:
 
 # --- Sidebar: Operating Conditions & Inputs ---
 st.sidebar.header("⚙️ Operating Conditions")
-temperature_k = paired_input("Operating Temperature (K)", 0.0, 3000.0, 1600.0 if "Deadman" in bf_zone else 1000.0, 10.0, "temp_k")
+temperature_k = paired_input("Operating Temperature (K)", 273.15, 1800.0, 1600.0 if "Deadman" in bf_zone else 1000.0, 10.0, "temp_k")
 
 mass_fractions = {}
 if "Granular" in bf_zone:
@@ -203,7 +203,7 @@ st.subheader(f"📊 Homogenized Parameters for: {bf_zone}")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric(label=f"Effective Specific Heat (Cp) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
+    st.metric(label=f"Effective Specific Heat (Cp) at {temperature_k:.1f} K", value=f"{cp_eff:.2f} J/(kg·K)")
     st.metric(label="Effective Bulk Density (ρ_bed)", value=f"{rho_bed_effective:.2f} kg/m³")
     if "Deadman" in bf_zone:
         st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
@@ -211,8 +211,8 @@ with col1:
         st.metric(label=f"Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
-    st.metric(label=f"Packed Bed Effective Conductivity (k_eff) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
-    st.metric(label=f"Equivalent Solid Conductivity (ks) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
+    st.metric(label=f"Packed Bed Effective Conductivity (k_eff) at {temperature_k:.1f} K", value=f"{k_bed_effective:.3f} W/(m·K)")
+    st.metric(label=f"Equivalent Solid Conductivity (ks) at {temperature_k:.1f} K", value=f"{ks_eff:.3f} W/(m·K)")
     st.metric(label="Bed Void Fraction (ϕ)", value=f"{bed_void_fraction:.2f}")
 
 # --- Analytical Formulas Display ---
