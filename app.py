@@ -118,41 +118,67 @@ for mat_name in ['coke', 'sinter', 'pellet', 'lump']:
             'k_coeffs': (k_a, k_b, k_c)
         }
 
-# --- Sidebar: Operating Conditions & Volume Inputs ---
-st.sidebar.header("⚙️ Operating Conditions & Volume Inputs")
+# --- Sidebar: Input Method Selection & Material Inputs ---
+st.sidebar.header("⚖️ Burden Material Inputs")
+
+input_method = st.sidebar.radio(
+    "Choose Input Method",
+    ["Volume-based (m³)", "Mass-based (kg)"]
+)
+
+st.sidebar.header("⚙️ Operating Conditions")
 temperature_k = paired_input("Operating Temperature (K)", 273.15, 1800.0, 1600.0 if "Deadman" in bf_zone else 1000.0, 10.0, "temp_k")
 
 volumes = {}
-if "Granular" in bf_zone:
-    st.sidebar.subheader("Granular Material Volumes (m³)")
-    coke_v = st.sidebar.number_input("Coke Volume (m³)", min_value=0.0, value=2.0, step=0.1, key="coke_v")
-    sinter_v = st.sidebar.number_input("Sinter Volume (m³)", min_value=0.0, value=3.5, step=0.1, key="sinter_v")
-    pellet_v = st.sidebar.number_input("Pellet Volume (m³)", min_value=0.0, value=3.0, step=0.1, key="pellet_v")
-    lump_v = st.sidebar.number_input("Lump Ore Volume (m³)", min_value=0.0, value=1.5, step=0.1, key="lump_v")
-    
-    volumes = {'coke': coke_v, 'sinter': sinter_v, 'pellet': pellet_v, 'lump': lump_v}
-else:
-    st.sidebar.subheader("Deadman Coke Volume (m³)")
-    coke_v = st.sidebar.number_input("Coke Volume in Deadman (m³)", min_value=0.1, value=10.0, step=0.5, key="coke_deadman_v")
-    volumes = {'coke': coke_v, 'sinter': 0.0, 'pellet': 0.0, 'lump': 0.0}
+masses = {}
 
-# --- Void Fraction & Mass Calculations ---
+if "Granular" in bf_zone:
+    st.sidebar.subheader("Granular Burden Proportions")
+    if input_method == "Volume-based (m³)":
+        coke_v = st.sidebar.number_input("Coke Volume (m³)", min_value=0.0, value=2.0, step=0.1, key="coke_v")
+        sinter_v = st.sidebar.number_input("Sinter Volume (m³)", min_value=0.0, value=3.5, step=0.1, key="sinter_v")
+        pellet_v = st.sidebar.number_input("Pellet Volume (m³)", min_value=0.0, value=3.0, step=0.1, key="pellet_v")
+        lump_v = st.sidebar.number_input("Lump Ore Volume (m³)", min_value=0.0, value=1.5, step=0.1, key="lump_v")
+        
+        volumes = {'coke': coke_v, 'sinter': sinter_v, 'pellet': pellet_v, 'lump': lump_v}
+        for mat, v in volumes.items():
+            masses[mat] = v * materials[mat]['bulk_density']
+    else:
+        coke_m = st.sidebar.number_input("Coke Mass (kg)", min_value=0.0, value=960.0, step=50.0, key="coke_m")
+        sinter_m = st.sidebar.number_input("Sinter Mass (kg)", min_value=0.0, value=5950.0, step=50.0, key="sinter_m")
+        pellet_m = st.sidebar.number_input("Pellet Mass (kg)", min_value=0.0, value=6150.0, step=50.0, key="pellet_m")
+        lump_m = st.sidebar.number_input("Lump Ore Mass (kg)", min_value=0.0, value=3300.0, step=50.0, key="lump_m")
+        
+        masses = {'coke': coke_m, 'sinter': sinter_m, 'pellet': pellet_m, 'lump': lump_m}
+        for mat, m in masses.items():
+            bd = materials[mat]['bulk_density']
+            volumes[mat] = m / bd if bd > 0 else 0.0
+else:
+    st.sidebar.subheader("Deadman Coke Quantity")
+    if input_method == "Volume-based (m³)":
+        coke_v = st.sidebar.number_input("Coke Volume in Deadman (m³)", min_value=0.1, value=10.0, step=0.5, key="coke_deadman_v")
+        volumes = {'coke': coke_v, 'sinter': 0.0, 'pellet': 0.0, 'lump': 0.0}
+        masses = {'coke': coke_v * materials['coke']['bulk_density'], 'sinter': 0.0, 'pellet': 0.0, 'lump': 0.0}
+    else:
+        coke_m = st.sidebar.number_input("Coke Mass in Deadman (kg)", min_value=1.0, value=4800.0, step=100.0, key="coke_deadman_m")
+        bd = materials['coke']['bulk_density']
+        volumes = {'coke': coke_m / bd if bd > 0 else 0.0, 'sinter': 0.0, 'pellet': 0.0, 'lump': 0.0}
+        masses = {'coke': coke_m, 'sinter': 0.0, 'pellet': 0.0, 'lump': 0.0}
+
+# --- Void Fraction & Mass Fractions Calculations ---
 total_volume = sum(volumes.values())
 if total_volume == 0:
     total_volume = 1.0  # Prevent division by zero
 
 material_voids = {}
 weighted_void_sum = 0.0
-masses = {}
 
 for mat, vol in volumes.items():
     td = materials[mat]['true_density']
     bd = materials[mat]['bulk_density']
     mat_void = 1.0 - (bd / td) if td > 0 else 0.0
     material_voids[mat] = mat_void
-    
     weighted_void_sum += vol * mat_void
-    masses[mat] = vol * bd
 
 calculated_bed_void_fraction = weighted_void_sum / total_volume
 
@@ -248,12 +274,13 @@ with col2:
     st.metric(label=f"Equivalent Solid Conductivity (ks) at {temperature_k:.1f} K", value=f"{ks_eff:.3f} W/(m·K)")
     st.metric(label="Calculated Bed Void Fraction (ϕ)", value=f"{calculated_bed_void_fraction:.4f}")
 
-# --- Analytical Formulas Display ---
+# --- Analytical Formulas & Export Section ---
 st.markdown("---")
 st.subheader("📐 Analytical Equations for COMSOL / Numerical Implementation")
 
 cp_A, cp_B, cp_C = formula_coeffs['cp']
 ks_A, ks_B, ks_C = formula_coeffs['ks']
+emissivity_val = 0.88 if "Deadman" not in bf_zone else 0.92
 
 st.markdown(rf"""
 Based on your region selection (**{bf_zone}**), the active thermophysical functions are:
@@ -268,8 +295,55 @@ Based on your region selection (**{bf_zone}**), the active thermophysical functi
    $$\rho_{{bed}} = {rho_bed_effective:.2f} \;\;\text{{[kg/m³]}}$$
 
 4. **Packed Bed Effective Thermal Conductivity $k_{{eff}}(T)$**:
-   $$k_{{eff}}(T) = {gas_conductivity} \cdot \left({calculated_bed_void_fraction:.4f} + \frac{{1 - {calculated_bed_void_fraction:.4f}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot \epsilon \cdot \sigma \cdot {mean_particle_diameter} \cdot T^3$$
+   $$k_{{eff}}(T) = {gas_conductivity} \cdot \left({calculated_bed_void_fraction:.4f} + \frac{{1 - {calculated_bed_void_fraction:.4f}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot {emissivity_val} \cdot \sigma \cdot {mean_particle_diameter} \cdot T^3$$
 """)
+
+# --- COMSOL Text Export Content Generator ---
+zone_slug = "Granular" if "Granular" in bf_zone else "Deadman"
+comsol_text = f"""====================================================================
+BLAST FURNACE THERMOPHYSICAL MODEL EXPORT (COMSOL MULTIPHYSICS)
+Zone: {bf_zone}
+Operating Temperature Reference: {temperature_k:.2f} K
+====================================================================
+
+[GLOBAL DEFINITIONS -> ANALYTIC FUNCTIONS]
+
+1. Name: Cp_eff
+   Arguments: T
+   Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
+   Units: J/(kg*K)
+
+2. Name: ks_eff
+   Arguments: T
+   Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
+   Units: W/(m*K)
+
+3. Name: k_eff
+   Arguments: T
+   Expression: {gas_conductivity} * ({calculated_bed_void_fraction:.6f} + (1 - {calculated_bed_void_fraction:.6f}) / (0.8 * ({gas_conductivity} / ks_eff(T)) + 0.95)) + 4 * 0.95 * {emissivity_val} * 5.67e-8 * {mean_particle_diameter} * T^3
+   Units: W/(m*K)
+
+[GLOBAL DEFINITIONS -> PARAMETERS]
+rho_bed = {rho_bed_effective:.2f} [kg/m^3]
+phi_bed = {calculated_bed_void_fraction:.4f}
+mean_dp = {mean_particle_diameter} [m]
+k_gas   = {gas_conductivity} [W/(m*K)]
+
+[SUMMARY OF COMPUTED PROPERTIES AT T = {temperature_k:.1f} K]
+- Cp_eff  : {cp_eff:.2f} J/(kg*K)
+- ks_eff  : {ks_eff:.3f} W/(m*K)
+- k_eff   : {k_bed_effective:.3f} W/(m*K)
+- rho_bed : {rho_bed_effective:.2f} kg/m^3
+- phi     : {calculated_bed_void_fraction:.4f}
+====================================================================
+"""
+
+st.download_button(
+    label="📥 Download COMSOL Functions (.txt)",
+    data=comsol_text,
+    file_name=f"COMSOL_BF_{zone_slug}_Properties.txt",
+    mime="text/plain"
+)
 
 # Visual Breakdown Chart
 st.markdown("---")
@@ -279,6 +353,6 @@ with col_c1:
     st.markdown("**Volume Distribution (m³)**")
     st.bar_chart({mat.capitalize(): [v] for mat, v in volumes.items()})
 with col_c2:
-    st.markdown("**Calculated Mass Distribution (%)**")
-    st.bar_chart({mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()})
-    
+    st.markdown("**Mass Distribution (kg)**")
+    st.bar_chart({mat.capitalize(): [m] for mat, m in masses.items()})
+        
