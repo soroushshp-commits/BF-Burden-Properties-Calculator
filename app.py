@@ -108,11 +108,10 @@ with st.sidebar.expander("Advanced Bed & Void Settings"):
         liquid_holdup = 0.0
         
     mean_particle_diameter = st.slider("Mean Particle Diameter (m)", 0.01, 0.08, 0.04 if "Deadman" in bf_zone else 0.025, 0.001)
-    gas_conductivity = st.sidebar.slider if False else 0.05 # Baseline gas conductivity
+    gas_conductivity = 0.04
 
 # --- Calculation Engine ---
 def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, materials, zone_type):
-    # 1. Effective Specific Heat (Mass-weighted)
     cp_eff = 0.0
     cp_A_eff, cp_B_eff, cp_C_eff = 0.0, 0.0, 0.0
     for mat, w in mass_fractions.items():
@@ -123,14 +122,10 @@ def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, material
             cp_C_eff += w * C
             cp_eff += w * (A + B * T + C * (T ** -2))
             
-    # If deadman, add sensible heat contribution of liquid holdup if desired
     if "Deadman" in zone_type:
-        # Average liquid iron/slag Cp is roughly ~850 J/kg-K
         cp_liquid_avg = 850.0 
-        # Weighted modification based on holdup
         cp_eff = (1.0 - liq_holdup) * cp_eff + liq_holdup * cp_liquid_avg
 
-    # 2. Volume fractions for solid conductivity blending
     active_mats = {mat: w for mat, w in mass_fractions.items() if w > 0}
     volumes = {mat: w / materials[mat]['true_density'] for mat, w in active_mats.items()}
     total_vol = sum(volumes.values())
@@ -145,16 +140,13 @@ def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, material
         ks_C_eff += x_v * C
         ks_eff += x_v * (A + B * T + C * (T ** 2))
     
-    # 3. Densities and Porosity
     rho_solid_avg = sum(vol_fractions[mat] * materials[mat]['true_density'] for mat in active_mats)
     rho_bed_effective = (1.0 - phi) * rho_solid_avg
     
     if "Deadman" in zone_type:
-        # Effective density including liquid metal/slag density (~6500 kg/m3 for liquid iron/slag mix)
         rho_liq_avg = 6500.0
         rho_bed_effective = (1.0 - phi) * rho_solid_avg + phi * liq_holdup * rho_liq_avg
 
-    # 4. Packed-Bed Effective Thermal Conductivity (Yagi-Kunii)
     sigma = 5.67e-8
     emissivity = 0.88 if "Deadman" not in zone_type else 0.92
     alpha_yk, gamma_yk, beta_yk = 0.8, 0.95, 0.95
@@ -181,17 +173,17 @@ st.subheader(f"📊 Homogenized Parameters for: {bf_zone}")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric(label=f"Effective Specific Heat ($C_p$) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
-    st.metric(label="Effective Bulk Density ($\rho_{\text{bed}}$)", value=f"{rho_bed_effective:.2f} kg/m³")
+    st.metric(label=rf"Effective Specific Heat ($C_p$) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
+    st.metric(label=r"Effective Bulk Density ($\rho_{\text{bed}}$)", value=f"{rho_bed_effective:.2f} kg/m³")
     if "Deadman" in bf_zone:
         st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
     else:
-        st.metric(label="Solid Skeleton Density ($\rho_{\text{solid}}$)", value=f"{rho_solid_avg:.2f} kg/m³")
+        st.metric(label=r"Solid Skeleton Density ($\rho_{\text{solid}}$)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
-    st.metric(label=f"Packed Bed Effective Conductivity ($k_{\text{eff}}$) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
-    st.metric(label=f"Equivalent Solid Conductivity ($k_s$) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
-    st.metric(label="Bed Void Fraction ($\phi$)", value=f"{bed_void_fraction:.2f}")
+    st.metric(label=rf"Packed Bed Effective Conductivity ($k_{{\text{{eff}}}}$) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
+    st.metric(label=rf"Equivalent Solid Conductivity ($k_s$) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
+    st.metric(label=r"Bed Void Fraction ($\phi$)", value=f"{bed_void_fraction:.2f}")
 
 # --- Analytical Formulas Display ---
 st.markdown("---")
@@ -209,7 +201,7 @@ Based on your region selection ({bf_zone}), the active thermophysical functions 
 2. **Equivalent Solid/Skeleton Thermal Conductivity $k_{{s,\text{{eff}}}}(T)$**:
    $$k_{{s,\text{{eff}}}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \\;\\; \text{{[W/(m·K)]}}$$
 
-3. **Effective Bulk Density $\rho_{\text{{bed}}}$**:
+3. **Effective Bulk Density $\rho_{\text{{bed}}$**:
    $$\rho_{\text{{bed}}} = {rho_bed_effective:.2f} \\;\\; \text{{[kg/m³]}}$$
 
 4. **Packed Bed Effective Thermal Conductivity $k_{\text{{eff}}}(T)$**:
@@ -221,3 +213,4 @@ st.markdown("---")
 st.subheader("📋 Zone Composition Breakdown")
 chart_data = {mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()}
 st.bar_chart(chart_data)
+    
