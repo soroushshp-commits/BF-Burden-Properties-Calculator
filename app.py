@@ -1,109 +1,261 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
 
 # Page Configuration
-st.set_page_config(page_title="BF Burden Properties Calculator", layout="wide")
+st.set_page_config(
+    page_title="Blast Furnace Burden & Deadman Thermophysical Simulator",
+    page_icon="🔥",
+    layout="wide"
+)
 
-st.title("Blast Furnace Burden Properties Calculator")
-st.markdown("Calculate effective packed bed properties (Porosity, Density, Fractions) for COMSOL Multiphysics.")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator")
+st.markdown("""
+This application computes temperature-dependent thermophysical properties for the blast furnace. 
+It uses the **Bounded Series-Parallel Resistance Model** for effective conductivity ($k_{eff}$) and calculates **LTNE Interphase Heat Transfer**.
+""")
 
-# Define the burden materials
-materials = ["Coke", "Iron Ore Pellets", "Sinter", "Lump Ore"]
+# --- Helper Function: Synchronized Input ---
+def paired_input(label, min_val, max_val, default_val, step, key, container=st.sidebar, fmt="%.3f"):
+    val_key = f"val_{key}"
+    num_key = f"num_{key}"
+    slider_key = f"slider_{key}"
 
-# Default values based on typical blast furnace ranges
-defaults = {
-    "Coke": {"mass": 500.0, "rho_bulk": 500.0, "rho_true": 1850.0},
-    "Iron Ore Pellets": {"mass": 1000.0, "rho_bulk": 2100.0, "rho_true": 4000.0},
-    "Sinter": {"mass": 1500.0, "rho_bulk": 1800.0, "rho_true": 3800.0},
-    "Lump Ore": {"mass": 500.0, "rho_bulk": 2000.0, "rho_true": 4200.0},
+    if val_key not in st.session_state: st.session_state[val_key] = float(default_val)
+    if num_key not in st.session_state: st.session_state[num_key] = float(default_val)
+    if slider_key not in st.session_state: st.session_state[slider_key] = float(default_val)
+
+    def update_from_num():
+        st.session_state[slider_key] = st.session_state[num_key]
+        st.session_state[val_key] = st.session_state[num_key]
+
+    def update_from_slider():
+        st.session_state[num_key] = st.session_state[slider_key]
+        st.session_state[val_key] = st.session_state[slider_key]
+
+    col_label, col_input = container.columns([3, 1.2])
+    with col_label: container.markdown(f"**{label}**")
+    with col_input:
+        container.number_input(
+            f"{label} num", min_value=float(min_val), max_value=float(max_val), 
+            step=float(step), format=fmt, key=num_key, on_change=update_from_num, label_visibility="collapsed"
+        )
+        
+    container.slider(
+        f"{label} slider", min_value=float(min_val), max_value=float(max_val), 
+        step=float(step), key=slider_key, on_change=update_from_slider, label_visibility="collapsed"
+    )
+    return st.session_state[val_key]
+
+# --- Sidebar: Zone & Input Method Selection ---
+st.sidebar.header("🗺️ Blast Furnace Region")
+bf_zone = st.sidebar.radio("Select Operating Zone", ["Granular Zone (Dry Burden Mix)", "Deadman / Lower Coke Zone (Coke + Melts)"])
+
+st.sidebar.header("⚖️ Input Method")
+input_method = st.sidebar.radio("Choose Primary Input", ["Mass-based (kg)", "Volume-based (m³)"])
+
+# --- Sidebar: Material Properties (Densities & Quantities) ---
+st.sidebar.header("🛠️ Burden Quantities & Densities")
+
+default_materials = {
+    'coke': {'td': 1850.0, 'bd': 480.0, 'mass': 960.0, 'vol': 2.0, 'cpa': 860.0, 'cpb': 5.40e-1, 'cpc': -2.75e7, 'ka': 0.28, 'kb': 1.75e-3, 'kc': -3.20e-7},
+    'sinter': {'td': 3450.0, 'bd': 1700.0, 'mass': 5950.0, 'vol': 3.5, 'cpa': 745.0, 'cpb': 2.60e-1, 'cpc': -1.25e7, 'ka': 0.92, 'kb': 0.48e-3, 'kc': 0.85e-7},
+    'pellet': {'td': 3350.0, 'bd': 2050.0, 'mass': 6150.0, 'vol': 3.0, 'cpa': 620.5, 'cpb': 6.15e-1, 'cpc': -1.18e7, 'ka': 1.42, 'kb': -0.38e-3, 'kc': 1.15e-7},
+    'lump': {'td': 4600.0, 'bd': 2200.0, 'mass': 3300.0, 'vol': 1.5, 'cpa': 615.0, 'cpb': 5.85e-1, 'cpc': -1.15e7, 'ka': 2.15, 'kb': -0.65e-3, 'kc': 0.25e-7}
 }
 
-st.header("1. Burden Material Inputs")
-st.markdown("Enter the **Mass**, **Bulk Density**, and **True Density**. The app will automatically calculate both **Bulk Volume** and **True Volume** for the mixture mechanics.")
+active_mats = ['coke', 'sinter', 'pellet', 'lump'] if "Granular" in bf_zone else ['coke']
 
-inputs = {}
-cols = st.columns(4)
+materials = {}
+masses = {}
+volumes = {}
 
-for i, mat in enumerate(materials):
-    with cols[i]:
-        st.subheader(mat)
+for mat in active_mats:
+    with st.sidebar.expander(f"{mat.capitalize()} Properties", expanded=(mat == 'coke')):
+        td = st.number_input(f"True Density (kg/m³)", value=default_materials[mat]['td'], step=50.0, key=f"{mat}_td")
+        bd = st.number_input(f"Bulk Density (kg/m³)", value=default_materials[mat]['bd'], step=50.0, key=f"{mat}_bd")
         
-        # Dual inputs: handling standard numerical inputs as requested
-        mass = st.number_input(f"Mass (kg) - {mat}", value=defaults[mat]["mass"], step=10.0, min_value=0.0)
-        rho_bulk = st.number_input(f"Bulk Density (kg/m³) - {mat}", value=defaults[mat]["rho_bulk"], step=10.0, min_value=1.0)
-        rho_true = st.number_input(f"True Density (kg/m³) - {mat}", value=defaults[mat]["rho_true"], step=10.0, min_value=1.0)
+        if input_method == "Mass-based (kg)":
+            m = st.number_input(f"Mass (kg)", value=default_materials[mat]['mass'], step=50.0, key=f"{mat}_m")
+            v = m / bd if bd > 0 else 0.0
+            st.caption(f"Calculated Bulk Volume: {v:.2f} m³")
+        else:
+            v = st.number_input(f"Bulk Volume (m³)", value=default_materials[mat]['vol'], step=0.1, key=f"{mat}_v")
+            m = v * bd
+            st.caption(f"Calculated Mass: {m:.2f} kg")
+            
+        masses[mat] = m
+        volumes[mat] = v
         
-        # Calculate the volumes based on mass and density
-        vol_bulk = mass / rho_bulk if rho_bulk > 0 else 0
-        vol_true = mass / rho_true if rho_true > 0 else 0
+        # Keep thermal polynomials stored
+        cpa, cpb, cpc = default_materials[mat]['cpa'], default_materials[mat]['cpb'], default_materials[mat]['cpc']
+        ka, kb, kc = default_materials[mat]['ka'], default_materials[mat]['kb'], default_materials[mat]['kc']
+        materials[mat] = {'true_density': td, 'bulk_density': bd, 'cp_coeffs': (cpa, cpb, cpc), 'k_coeffs': (ka, kb, kc)}
+
+# Include zeroed-out values for inactive materials in Deadman zone
+for mat in ['sinter', 'pellet', 'lump']:
+    if mat not in active_mats:
+        masses[mat] = 0.0
+        volumes[mat] = 0.0
+        materials[mat] = materials.get(mat, {'true_density': 1.0, 'bulk_density': 1.0, 'cp_coeffs': (0,0,0), 'k_coeffs': (0,0,0)})
+
+# --- Advanced Settings (Gas and Particle Properties) ---
+st.sidebar.header("💨 Gas Flow & LTNE Properties")
+temperature_k = paired_input("Bed Temp (K)", 273.15, 2000.0, 1600.0 if "Deadman" in bf_zone else 1000.0, 10.0, "temp_k", fmt="%.1f")
+vg = paired_input("Superficial Gas Velocity (m/s)", 0.1, 5.0, 1.5, 0.1, "vg_val")
+rho_g = paired_input("Gas Density (kg/m³)", 0.1, 2.0, 0.45, 0.05, "rho_g_val")
+mu_g = paired_input("Gas Viscosity (x10⁻⁵ Pa·s)", 1.0, 10.0, 4.5, 0.1, "mu_g_val") * 1e-5
+cp_g = paired_input("Gas Specific Heat (J/kg·K)", 500.0, 2500.0, 1150.0, 10.0, "cp_g_val")
+gas_conductivity = paired_input("Gas Conductivity (W/m·K)", 0.01, 0.2, 0.04, 0.005, "kg_val")
+mean_particle_diameter = paired_input("Particle Diameter (m)", 0.01, 0.1, 0.04 if "Deadman" in bf_zone else 0.025, 0.001, "dp_val")
+
+# --- Void Fraction & Mass Fractions Calculations ---
+total_volume = sum(volumes.values()) or 1.0
+total_mass = sum(masses.values()) or 1.0
+mass_fractions = {mat: m / total_mass for mat, m in masses.items()}
+
+# Bed Porosity Calculation: sum( V_bulk_i * (1 - rho_bulk_i / rho_true_i) ) / V_bulk_total
+weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials[mat]['true_density'])) for mat, vol in volumes.items() if materials[mat]['true_density'] > 0)
+phi = weighted_void_sum / total_volume
+
+# --- Physics Calculation Engine ---
+def calculate_physics(T):
+    # 1. Pure Solid Properties
+    cp_s, ks_s, rho_s = 0.0, 0.0, 0.0
+    cp_A, cp_B, cp_C = 0.0, 0.0, 0.0
+    ks_A, ks_B, ks_C = 0.0, 0.0, 0.0
+    
+    active = {m: w for m, w in mass_fractions.items() if w > 0}
+    v_solid = {m: w / materials[m]['true_density'] for m, w in active.items()}
+    v_tot = sum(v_solid.values())
+    vol_fracs = {m: v / v_tot for m, v in v_solid.items()} if v_tot > 0 else {}
+    
+    for m, w in active.items():
+        A, B, C = materials[m]['cp_coeffs']
+        cp_A += w * A; cp_B += w * B; cp_C += w * C
+        cp_s += w * (A + B * T + C * (T ** -2))
         
-        # Individual Porosity: eps = 1 - (rho_bulk / rho_true)
-        porosity = 1.0 - (rho_bulk / rho_true) if rho_true > 0 else 0
+    for m, x in vol_fracs.items():
+        A, B, C = materials[m]['k_coeffs']
+        ks_A += x * A; ks_B += x * B; ks_C += x * C
+        ks_s += x * (A + B * T + C * (T ** 2))
+        rho_s += x * materials[m]['true_density']
+
+    # 2. Homogenized Bed Properties & Bounded Conductivity
+    rho_bed = (1.0 - phi) * rho_s
+    cp_bed = cp_s # Mass basis equality for dry bed
+    
+    emissivity = 0.92 if "Deadman" in bf_zone else 0.88
+    sigma = 5.67e-8
+    
+    # BOUNDED RADIATION MODEL
+    k_rad = 4.0 * emissivity * sigma * mean_particle_diameter * (T ** 3)
+    k_gap = gas_conductivity + k_rad 
+    
+    # Series path: Heat must travel through the solid and the gap sequentially
+    if ks_s > 0 and k_gap > 0:
+        k_series = (1.0 - phi) / ((1.0 / ks_s) + (1.0 / k_gap))
+    else:
+        k_series = 0.0
         
-        inputs[mat] = {
-            "Mass [kg]": mass,
-            "Bulk Density [kg/m³]": rho_bulk,
-            "True Density [kg/m³]": rho_true,
-            "Bulk Volume [m³]": vol_bulk,
-            "True Volume [m³]": vol_true,
-            "Porosity [-]": porosity
-        }
+    # Parallel path: Gas conduction only (radiation blocked by staggered solid)
+    k_parallel = phi * gas_conductivity
+    k_bed = k_series + k_parallel
 
-# Create a DataFrame for the raw properties and calculated volumes
-df_individual = pd.DataFrame(inputs).T
+    # 3. Interphase Heat Transfer (Wakao and Kaguei)
+    Re = (rho_g * vg * mean_particle_diameter) / mu_g if mu_g > 0 else 0
+    Pr = (cp_g * mu_g) / gas_conductivity if gas_conductivity > 0 else 0
+    Nu = 2.0 + 1.1 * (Pr ** (1/3)) * (Re ** 0.6)
+    
+    h_sf = (Nu * gas_conductivity) / mean_particle_diameter if mean_particle_diameter > 0 else 0
+    a_sf = (6.0 * (1.0 - phi)) / mean_particle_diameter if mean_particle_diameter > 0 else 0
+    q_sf_coeff = h_sf * a_sf
 
-st.header("2. Individual Component Properties & Volumes")
-st.dataframe(df_individual.style.format("{:.4f}"), use_container_width=True)
+    coeffs = {'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C)}
+    return (cp_s, ks_s, rho_s), (cp_bed, k_bed, rho_bed), (Re, Pr, Nu, h_sf, a_sf, q_sf_coeff), coeffs
 
-# ---------------------------------------------------------
-# Mixture & Effective Property Calculations
-# ---------------------------------------------------------
-total_mass = df_individual["Mass [kg]"].sum()
-total_bulk_vol = df_individual["Bulk Volume [m³]"].sum()
-total_true_vol = df_individual["True Volume [m³]"].sum()
+(cp_s, ks_s, rho_s), (cp_bed, k_bed, rho_bed), interphase, coeffs = calculate_physics(temperature_k)
+Re, Pr, Nu, h_sf, a_sf, q_sf_coeff = interphase
+cp_A, cp_B, cp_C = coeffs['cp']
+ks_A, ks_B, ks_C = coeffs['ks']
 
-# Calculate Fractions (Mass and Volume)
-df_individual["Mass Fraction (x_i)"] = df_individual["Mass [kg]"] / total_mass if total_mass > 0 else 0
-df_individual["Bulk Vol Fraction (v_bulk_i)"] = df_individual["Bulk Volume [m³]"] / total_bulk_vol if total_bulk_vol > 0 else 0
-df_individual["True Vol Fraction (v_true_i)"] = df_individual["True Volume [m³]"] / total_true_vol if total_true_vol > 0 else 0
+# --- Display Results ---
+st.markdown("---")
+st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K (Calculated Bed Porosity ϕ = {phi:.4f})")
 
-st.header("3. Mixture Fractions")
-st.dataframe(df_individual[["Mass Fraction (x_i)", "Bulk Vol Fraction (v_bulk_i)", "True Vol Fraction (v_true_i)"]].style.format("{:.4f}"), use_container_width=True)
+tab1, tab2, tab3 = st.tabs([
+    "🟢 COMSOL LTNE: Solid & Interphase", 
+    "🔵 COMSOL Standard: Homogenized Bed",
+    "⚙️ Fluid Dynamics (Dimensionless)"
+])
 
-# Effective Properties for the Packed Bed
-eff_bulk_density = total_mass / total_bulk_vol if total_bulk_vol > 0 else 0
-eff_true_density = total_mass / total_true_vol if total_true_vol > 0 else 0
-eff_porosity = 1.0 - (eff_bulk_density / eff_true_density) if eff_true_density > 0 else 0
+with tab1:
+    st.info("💡 **For Heat Transfer in Porous Media (LTNE).** Notice how $k_s$ remains the strict upper bound.")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Solid Density (ρ_s)", f"{rho_s:.2f} kg/m³")
+    col2.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
+    col3.metric("Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
+    
+    st.markdown("#### Interphase Coupling (Gas-Solid)")
+    col4, col5, col6 = st.columns(3)
+    col4.metric("Specific Surface Area (a_sf)", f"{a_sf:.1f} m²/m³")
+    col5.metric("Interphase HTC (h_sf)", f"{h_sf:.2f} W/(m²·K)")
+    col6.metric("Volumetric Transfer Coeff (a·h)", f"{q_sf_coeff:.1f} W/(m³·K)")
 
-st.header("4. Effective Packed Bed Properties (COMSOL Inputs)")
-col1, col2, col3 = st.columns(3)
-col1.metric("Effective Bulk Density", f"{eff_bulk_density:.2f} kg/m³")
-col2.metric("Effective True Density", f"{eff_true_density:.2f} kg/m³")
-col3.metric("Effective Bed Porosity", f"{eff_porosity:.4f}")
+with tab2:
+    st.info("💡 **For standard Single-Phase Heat Transfer.** Bounded Series-Parallel formulation applied.")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Bulk Bed Density (ρ_bed)", f"{rho_bed:.2f} kg/m³")
+    col2.metric("Bed Effective Conductivity (k_eff)", f"{k_bed:.3f} W/(m·K)")
+    col3.metric("Bed Heat Capacity (Cp_bed)", f"{cp_bed:.2f} J/(kg·K)")
 
-# LaTeX Explanations with f-string fixes (using double braces {{ }})
-st.markdown("### Governing Equations")
-st.latex(rf"\rho_{{bulk, eff}} = \frac{{\sum m_i}}{{\sum V_{{bulk, i}}}} = \frac{{{total_mass:.2f}}}{{{total_bulk_vol:.2f}}} = {eff_bulk_density:.2f} \text{{ kg/m}}^3")
-st.latex(rf"\rho_{{true, eff}} = \frac{{\sum m_i}}{{\sum V_{{true, i}}}} = \frac{{{total_mass:.2f}}}{{{total_true_vol:.2f}}} = {eff_true_density:.2f} \text{{ kg/m}}^3")
-st.latex(rf"\epsilon_{{eff}} = 1 - \frac{{\rho_{{bulk, eff}}}}{{\rho_{{true, eff}}}} = 1 - \frac{{{eff_bulk_density:.2f}}}{{{eff_true_density:.2f}}} = {eff_porosity:.4f}")
+with tab3:
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Reynolds Number (Re)", f"{Re:.1f}")
+    col2.metric("Prandtl Number (Pr)", f"{Pr:.3f}")
+    col3.metric("Nusselt Number (Nu)", f"{Nu:.2f}")
 
-# ---------------------------------------------------------
-# COMSOL Variables Export
-# ---------------------------------------------------------
-st.header("5. COMSOL Parameters Export")
-st.markdown("Copy these calculated parameters directly into your COMSOL **Parameters** or **Variables** node for the Brinkman equations / LTNE interfaces.")
+# --- COMSOL Text Export Content Generator ---
+emissivity_val = 0.92 if "Deadman" in bf_zone else 0.88
+comsol_text = f"""====================================================================
+BLAST FURNACE THERMOPHYSICAL MODEL EXPORT (COMSOL MULTIPHYSICS)
+Operating Temperature: {temperature_k:.2f} K | Bed Porosity (phi): {phi:.4f}
+====================================================================
 
-comsol_code = f"""// Blast Furnace Burden - Effective Bed Properties
-rho_bulk_eff = {eff_bulk_density:.2f} [kg/m^3];  // Effective Bulk Density
-rho_true_eff = {eff_true_density:.2f} [kg/m^3];  // Effective True Density
-eps_eff = {eff_porosity:.4f};                  // Effective Bed Porosity
+--------------------------------------------------------------------
+1. HEAT TRANSFER IN POROUS MEDIA (LTNE)
+--------------------------------------------------------------------
+[Solid Properties]
+rho_s = {rho_s:.2f} [kg/m^3]
 
-// Component Mass Fractions
-x_coke = {df_individual.loc["Coke", "Mass Fraction (x_i)"]:.4f};
-x_pellets = {df_individual.loc["Iron Ore Pellets", "Mass Fraction (x_i)"]:.4f};
-x_sinter = {df_individual.loc["Sinter", "Mass Fraction (x_i)"]:.4f};
-x_lump = {df_individual.loc["Lump Ore", "Mass Fraction (x_i)"]:.4f};
+Analytic Function (Cp_s):
+  Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
+
+Analytic Function (k_s):
+  Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
+
+[Interphase Heat Transfer Coupling]
+a_sf = {a_sf:.2f} [m^2/m^3]
+h_sf = {h_sf:.2f} [W/(m^2*K)]
+Volumetric Coupling (q_sf) = {q_sf_coeff:.2f} * (T_fluid - T_solid) [W/m^3]
+
+--------------------------------------------------------------------
+2. HOMOGENIZED BED MODEL (SINGLE DOMAIN)
+--------------------------------------------------------------------
+[Global Parameters]
+rho_bed = {rho_bed:.2f} [kg/m^3]
+
+Analytic Function (k_eff - Bounded Series-Parallel Model):
+  Variables: 
+    k_gap = {gas_conductivity} + 4*{emissivity_val}*5.67e-8*{mean_particle_diameter}*T^3
+  Expression: 
+    ((1 - {phi:.4f}) / (1/k_s(T) + 1/k_gap)) + ({phi:.4f} * {gas_conductivity})
+
+====================================================================
 """
 
-st.code(comsol_code, language="c")
+st.download_button(
+    label="📥 Download Updated COMSOL Variables (.txt)",
+    data=comsol_text,
+    file_name=f"COMSOL_BF_Properties_Corrected.txt",
+    mime="text/plain"
+)
