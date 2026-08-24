@@ -7,12 +7,12 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Corrected Scaling)")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator")
 st.markdown("""
-**Model Architecture Corrections:** 
-* **Effective Heat Capacity:** $C_{p,eff} = C_{p,s} \cdot (1 - \phi)$ ( strictly multiplied by the $(1-\phi)$ factor, no density cross-multiplication).
-* **Effective Conductivity:** $k_{eff} = k_s \cdot (1 - \phi)$ for the manual solid matrix.
-* **Custom Polynomials:** Full control over $C_p$ and $k$ coefficients ($A, B, C$) for every material.
+**Model Architecture Updates:** 
+* **LTNE Solid Sub-Node:** Utilizes the **True Density ($\rho_s$)** of the solid particles.
+* **Manual Solid Matrix:** Utilizes the **Bulk Density ($\rho_{bulk}$)** of the bed.
+* **Effective Properties:** $C_{p,eff} = C_{p,s} \cdot (1 - \phi)$ and $k_{eff} = k_s \cdot (1 - \phi)$.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -120,6 +120,7 @@ phi = weighted_void_sum / total_volume
 # --- Physics Calculation Engine ---
 def calculate_physics(T):
     cp_s, ks_s, rho_s = 0.0, 0.0, 0.0
+    rho_bulk_mix = 0.0
     cp_A, cp_B, cp_C = 0.0, 0.0, 0.0
     ks_A, ks_B, ks_C = 0.0, 0.0, 0.0
     
@@ -139,7 +140,10 @@ def calculate_physics(T):
         ks_s += x * (A + B * T + C * (T ** 2))
         rho_s += x * materials[m]['true_density']
 
-    # Effective properties: strictly scaled by (1 - phi)
+    # Mixture bulk density based on total mass and total volume
+    rho_bulk = total_mass / total_volume if total_volume > 0 else 0.0
+
+    # Effective properties (strictly scalar scaling by [1 - phi])
     cp_s_eff = cp_s * (1.0 - phi)
     ks_s_eff = ks_s * (1.0 - phi)
 
@@ -153,9 +157,9 @@ def calculate_physics(T):
     q_sf_coeff = h_sf * a_sf
 
     coeffs = {'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C)}
-    return (cp_s, ks_s, rho_s), (cp_s_eff, ks_s_eff), (Re, Pr, Nu, h_sf, a_sf, q_sf_coeff), coeffs
+    return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (Re, Pr, Nu, h_sf, a_sf, q_sf_coeff), coeffs
 
-(cp_s, ks_s, rho_s), (cp_s_eff, ks_s_eff), interphase, coeffs = calculate_physics(temperature_k)
+(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), interphase, coeffs = calculate_physics(temperature_k)
 Re, Pr, Nu, h_sf, a_sf, q_sf_coeff = interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
@@ -171,20 +175,20 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-    st.info("💡 **LTNE Solid Matrix.** Uses pure intrinsic solid properties.")
+    st.info("💡 **LTNE Solid Matrix.** Uses True Density and intrinsic solid properties.")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Intrinsic Solid Density (ρ_s)", f"{rho_s:.2f} kg/m³")
-    col2.metric("Intrinsic Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
-    col3.metric("Intrinsic Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
+    col1.metric("True Density (ρ_s)", f"{rho_s:.2f} kg/m³")
+    col2.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
+    col3.metric("Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
     
     st.markdown("#### Analytical Functions ($T$)")
     st.latex(rf"C_{{p,s}}(T) = {cp_A:.4f} + ({cp_B:.4e})T + ({cp_C:.4e})T^{{-2}}")
     st.latex(rf"k_s(T) = {ks_A:.4f} + ({ks_B:.4e})T + ({ks_C:.4e})T^2")
 
 with tab2:
-    st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Properties scaled strictly by $(1 - \phi)$ with no gas properties.")
+    st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Uses Bulk Density and properties scaled strictly by $(1 - \phi)$.")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Intrinsic Solid Density (ρ_s)", f"{rho_s:.2f} kg/m³")
+    col1.metric("Bulk Density (ρ_bulk)", f"{rho_bulk:.2f} kg/m³")
     col2.metric("Effective Conductivity (k_eff = k_s · [1-φ])", f"{ks_s_eff:.3f} W/(m·K)")
     col3.metric("Effective Heat Capacity (Cp_eff = Cp_s · [1-φ])", f"{cp_s_eff:.2f} J/(kg·K)")
     
@@ -213,7 +217,7 @@ Evaluated at Temp: {temperature_k:.2f} K | Bed Porosity (phi): {phi:.4f}
 --------------------------------------------------------------------
 1. HEAT TRANSFER IN POROUS MEDIA (LTNE) - SOLID SUB-NODE
 --------------------------------------------------------------------
-rho_s_intrinsic = {rho_s:.2f} [kg/m^3]
+rho_s = {rho_s:.2f} [kg/m^3]  // True density
 porosity_phi = {phi:.4f}
 
 [Analytic Function: Solid Heat Capacity Cp_s(T)]
@@ -225,7 +229,7 @@ Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
 --------------------------------------------------------------------
 2. HEAT TRANSFER IN SOLIDS (MANUAL COUPLING SOLID MATRIX)
 --------------------------------------------------------------------
-rho_s = {rho_s:.2f} [kg/m^3]
+rho_bulk = {rho_bulk:.2f} [kg/m^3]  // Bulk density
 
 [Analytic Function: Effective Heat Capacity Cp_eff(T)]
 Expression: (1 - {phi:.4f}) * ( {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2) )
