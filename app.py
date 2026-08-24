@@ -7,11 +7,11 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Dual Physics Coupling)")
 st.markdown("""
-**Updates Applied:** 
-* **Mass Input Only:** Volume selection has been removed; mass is the single driver for the calculations.
-* **Revised Effective Heat Capacity:** `Cp_bed` is now calculated strictly as `(1 - phi) * Cp_s`.
+**Model Architecture:** 
+* **Physics 1 (LTNE):** Standard porous media solid sub-node.
+* **Physics 2 (Heat Transfer in Solids - Manual Coupling):** Solid matrix bed properties ($k_{s,eff}$ and $\rho_{s,eff}$) calculated strictly from the solid phase and solid fraction $(1-\phi)$, with **zero gas properties** included.
 * **Custom Polynomials:** Full control over $C_p$ and $k$ coefficients ($A, B, C$) for every material.
 """)
 
@@ -69,10 +69,8 @@ volumes = {}
 
 for mat in active_mats:
     with st.sidebar.expander(f"{mat.capitalize()} Properties", expanded=(mat == 'coke')):
-        # Densities and Base Quantities
         td = st.number_input("True Density (kg/m³)", value=default_materials[mat]['td'], step=50.0, key=f"{mat}_td")
         bd = st.number_input("Bulk Density (kg/m³)", value=default_materials[mat]['bd'], step=50.0, key=f"{mat}_bd")
-        
         m = st.number_input("Mass (kg)", value=default_materials[mat]['mass'], step=50.0, key=f"{mat}_m")
         v = m / bd if bd > 0 else 0.0
         st.caption(f"Calculated Bulk Volume: {v:.3f} m³")
@@ -81,7 +79,6 @@ for mat in active_mats:
         volumes[mat] = v
         
         st.divider()
-        # Polynomial Coefficients Input
         st.markdown(f"**$C_p$ Coefficients** ($A + B\\cdot T + C\\cdot T^{{-2}}$)")
         col_cpa, col_cpb, col_cpc = st.columns(3)
         cpa = col_cpa.number_input("A", value=float(default_materials[mat]['cpa']), key=f"{mat}_cpa")
@@ -96,7 +93,6 @@ for mat in active_mats:
 
         materials[mat] = {'true_density': td, 'bulk_density': bd, 'cp_coeffs': (cpa, cpb, cpc), 'k_coeffs': (ka, kb, kc)}
 
-# Include zeroed-out values for inactive materials
 for mat in ['sinter', 'pellet', 'lump']:
     if mat not in active_mats:
         masses[mat] = 0.0
@@ -118,13 +114,11 @@ total_volume = sum(volumes.values()) or 1.0
 total_mass = sum(masses.values()) or 1.0
 mass_fractions = {mat: m / total_mass for mat, m in masses.items()}
 
-# Bed Porosity Calculation
 weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials[mat]['true_density'])) for mat, vol in volumes.items() if materials[mat]['true_density'] > 0)
 phi = weighted_void_sum / total_volume
 
 # --- Physics Calculation Engine ---
 def calculate_physics(T):
-    # 1. Pure Solid Properties (Mass-weighted and Volume-weighted)
     cp_s, ks_s, rho_s = 0.0, 0.0, 0.0
     cp_A, cp_B, cp_C = 0.0, 0.0, 0.0
     ks_A, ks_B, ks_C = 0.0, 0.0, 0.0
@@ -145,29 +139,13 @@ def calculate_physics(T):
         ks_s += x * (A + B * T + C * (T ** 2))
         rho_s += x * materials[m]['true_density']
 
-    # 2. TRUE Homogenized Mixture Bed Properties (Solid + Gas phase)
-    # Density considers BOTH solid mass and gas mass within the void
-    rho_bed = (1.0 - phi) * rho_s + phi * rho_g
-    
-    # Effective Mixture Heat Capacity strictly calculated as Cp_s * (1 - phi)
-    cp_bed = cp_s * (1.0 - phi)
-    
-    emissivity = 0.92 if "Deadman" in bf_zone else 0.88
-    sigma = 5.67e-8
-    
-    # BOUNDED RADIATION MODEL
-    k_rad = 4.0 * emissivity * sigma * mean_particle_diameter * (T ** 3)
-    k_gap = gas_conductivity + k_rad 
-    
-    if ks_s > 0 and k_gap > 0:
-        k_series = (1.0 - phi) / ((1.0 / ks_s) + (1.0 / k_gap))
-    else:
-        k_series = 0.0
-        
-    k_parallel = phi * gas_conductivity
-    k_bed = k_series + k_parallel
+    # 1. LTNE Solid Properties (Intrinsic solid matrix, COMSOL handles porosity internally)
+    # 2. Solid Heat Transfer Domain (Manual Coupling Solid Matrix): Strictly solid bed properties (no gas properties)
+    rho_s_bed = rho_s * (1.0 - phi)
+    cp_s_bed = cp_s  # Specific heat capacity remains intensive per unit mass of solid
+    ks_s_bed = ks_s * (1.0 - phi)  # Solid skeleton effective conductivity scaled by solid volume fraction (1-phi)
 
-    # 3. Interphase Heat Transfer (Wakao and Kaguei)
+    # Interphase Heat Transfer (Wakao and Kaguei)
     Re = (rho_g * vg * mean_particle_diameter) / mu_g if mu_g > 0 else 0
     Pr = (cp_g * mu_g) / gas_conductivity if gas_conductivity > 0 else 0
     Nu = 2.0 + 1.1 * (Pr ** (1/3)) * (Re ** 0.6)
@@ -177,9 +155,9 @@ def calculate_physics(T):
     q_sf_coeff = h_sf * a_sf
 
     coeffs = {'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C)}
-    return (cp_s, ks_s, rho_s), (cp_bed, k_bed, rho_bed), (Re, Pr, Nu, h_sf, a_sf, q_sf_coeff), coeffs
+    return (cp_s, ks_s, rho_s), (rho_s_bed, cp_s_bed, ks_s_bed), (Re, Pr, Nu, h_sf, a_sf, q_sf_coeff), coeffs
 
-(cp_s, ks_s, rho_s), (cp_bed, k_bed, rho_bed), interphase, coeffs = calculate_physics(temperature_k)
+(cp_s, ks_s, rho_s), (rho_s_bed, cp_s_bed, ks_s_bed), interphase, coeffs = calculate_physics(temperature_k)
 Re, Pr, Nu, h_sf, a_sf, q_sf_coeff = interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
@@ -189,33 +167,32 @@ st.markdown("---")
 st.subheader(f"📊 Computed Properties at $T = {temperature_k:.1f}$ K (Void Fraction $\\phi = {phi:.4f}$)")
 
 tab1, tab2, tab3 = st.tabs([
-    "🟢 COMSOL LTNE: Solid Phase", 
-    "🔵 COMSOL Standard: True Mixture Domain",
-    "⚙️ Gas Dynamics & Interphase Coupling"
+    "🟢 COMSOL LTNE: Solid Sub-Node", 
+    "🟠 COMSOL Heat Transfer in Solids (Manual Solid Matrix)",
+    "⚙️ Gas Dynamics & Interphase Coupling ($q_{sf}$)"
 ])
 
 with tab1:
-    st.info("💡 **For Porous Media (LTNE).** These apply ONLY to the pure solid matrix. Gas is handled separately.")
+    st.info("💡 **LTNE Solid Matrix.** Uses pure intrinsic solid properties; COMSOL handles porosity scaling internally.")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Solid Density (ρ_s)", f"{rho_s:.2f} kg/m³")
-    col2.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
-    col3.metric("Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
+    col1.metric("Intrinsic Solid Density (ρ_s)", f"{rho_s:.2f} kg/m³")
+    col2.metric("Intrinsic Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
+    col3.metric("Intrinsic Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
     
-    st.markdown("#### Analytical Functions of Temperature ($T$)")
+    st.markdown("#### Analytical Functions ($T$)")
     st.latex(rf"C_{{p,s}}(T) = {cp_A:.4f} + ({cp_B:.4e})T + ({cp_C:.4e})T^{{-2}}")
     st.latex(rf"k_s(T) = {ks_A:.4f} + ({ks_B:.4e})T + ({ks_C:.4e})T^2")
 
 with tab2:
-    st.info("💡 **For Single-Phase Heat Transfer.** Using the user-defined direct scaling for Cp_eff.")
+    st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Solid bed properties scaled by $(1 - \phi)$ with **zero gas/fluid properties** included.")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Mixture Bed Density (ρ_bed)", f"{rho_bed:.2f} kg/m³")
-    col2.metric("Mixture Conductivity (k_eff)", f"{k_bed:.3f} W/(m·K)")
-    col3.metric("Mixture Heat Capacity (Cp_bed)", f"{cp_bed:.2f} J/(kg·K)")
+    col1.metric("Effective Solid Bed Density (ρ_s,bed)", f"{rho_s_bed:.2f} kg/m³")
+    col2.metric("Effective Solid Bed Conductivity (k_s,bed)", f"{ks_s_bed:.3f} W/(m·K)")
+    col3.metric("Solid Heat Capacity (Cp_s)", f"{cp_s_bed:.2f} J/(kg·K)")
     
-    st.markdown("#### Analytical Functions of Temperature ($T$)")
-    st.latex(rf"C_{{p,eff}}(T) = (1 - {phi:.4f}) \cdot C_{{p,s}}(T)")
-    st.latex(rf"k_{{gap}}(T) = {gas_conductivity} + 4 \cdot 0.88 \cdot 5.67 \times 10^{{-8}} \cdot {mean_particle_diameter} \cdot T^3")
-    st.latex(rf"k_{{eff}}(T) = \frac{{1 - {phi:.4f}}}{{\frac{{1}}{{k_s(T)}} + \frac{{1}}{{k_{{gap}}(T)}}}} + ({phi:.4f} \cdot {gas_conductivity})")
+    st.markdown("#### Analytical Functions ($T$)")
+    st.latex(rf"\rho_{{s,bed}} \cdot C_{{p,s}}(T) = (1 - {phi:.4f}) \cdot {rho_s:.2f} \cdot C_{{p,s}}(T)")
+    st.latex(rf"k_{{s,bed}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
 
 with tab3:
     col1, col2, col3 = st.columns(3)
@@ -223,24 +200,23 @@ with tab3:
     col2.metric("Prandtl Number (Pr)", f"{Pr:.3f}")
     col3.metric("Nusselt Number (Nu)", f"{Nu:.2f}")
     
-    st.markdown("#### Temperature-Dependent Heat Exchange ($q_{sf}$)")
+    st.markdown("#### Interphase Heat Exchange Source Term ($q_{sf}$)")
     col4, col5 = st.columns(2)
     col4.metric("Specific Surface Area (a_sf)", f"{a_sf:.1f} m²/m³")
     col5.metric("Interphase HTC (h_sf)", f"{h_sf:.2f} W/(m²·K)")
     st.latex(rf"q_{{sf}}(T_{{fluid}}, T_{{solid}}) = {a_sf:.2f} \cdot {h_sf:.2f} \cdot (T_{{fluid}} - T_{{solid}}) \text{{  [W/m³]}}")
 
 # --- COMSOL Text Export Content Generator ---
-emissivity_val = 0.92 if "Deadman" in bf_zone else 0.88
 comsol_text = f"""====================================================================
-BLAST FURNACE THERMOPHYSICAL MODEL EXPORT (COMSOL MULTIPHYSICS)
+BLAST FURNACE DUAL PHYSICS MODEL EXPORT (COMSOL MULTIPHYSICS)
 Evaluated at Temp: {temperature_k:.2f} K | Bed Porosity (phi): {phi:.4f}
 ====================================================================
 
 --------------------------------------------------------------------
 1. HEAT TRANSFER IN POROUS MEDIA (LTNE) - SOLID SUB-NODE
 --------------------------------------------------------------------
-[Constants]
-rho_s = {rho_s:.2f} [kg/m^3]
+rho_s_intrinsic = {rho_s:.2f} [kg/m^3]
+porosity_phi = {phi:.4f}
 
 [Analytic Function: Solid Heat Capacity Cp_s(T)]
 Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
@@ -248,32 +224,28 @@ Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
 [Analytic Function: Solid Conductivity k_s(T)]
 Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
 
-[Interphase Heat Transfer Coupling]
+--------------------------------------------------------------------
+2. HEAT TRANSFER IN SOLIDS (MANUAL COUPLING SOLID MATRIX)
+--------------------------------------------------------------------
+[Constants / Domain Parameters]
+rho_s_bed = {rho_s_bed:.6f} [kg/m^3]  // (1 - phi) * rho_s
+
+[Analytic Function: Solid Bed Conductivity k_s_bed(T)]
+Expression: (1 - {phi:.4f}) * ( {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2 )
+
+--------------------------------------------------------------------
+3. INTERPHASE HEAT TRANSFER COUPLING (FLUID-SOLID)
+--------------------------------------------------------------------
 a_sf = {a_sf:.6f} [m^2/m^3]
 h_sf = {h_sf:.6f} [W/(m^2*K)]
 Function q_sf(T_fluid, T_solid) = {q_sf_coeff:.6f} * (T_fluid - T_solid) [W/m^3]
-
---------------------------------------------------------------------
-2. HOMOGENIZED BED MODEL (SINGLE DOMAIN MIXTURE)
---------------------------------------------------------------------
-[Constants]
-rho_bed = {rho_bed:.6f} [kg/m^3]  // True density including gas mass
-
-[Analytic Function: Mixture Heat Capacity Cp_eff(T)]
-Expression: (1-{phi:.4f}) * Cp_s(T)
-
-[Analytic Function: Effective Conductivity k_eff(T)]
-Variables: 
-  k_gap(T) = {gas_conductivity} + 4*{emissivity_val}*5.67e-8*{mean_particle_diameter}*T^3
-Expression: 
-  ((1-{phi:.4f}) / ( (1/k_s(T)) + (1/k_gap(T)) )) + ({phi:.4f} * {gas_conductivity})
 
 ====================================================================
 """
 
 st.download_button(
-    label="📥 Download Updated COMSOL Variables (.txt)",
+    label="📥 Download Dual-Physics COMSOL Variables (.txt)",
     data=comsol_text,
-    file_name=f"COMSOL_BF_Properties_Final_Mixture.txt",
+    file_name=f"COMSOL_BF_DualPhysics_Properties.txt",
     mime="text/plain"
 )
