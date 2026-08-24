@@ -7,12 +7,12 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Coke Skeleton + Melts Integration)")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Multiphase Pore Fluid & Coke Skeleton)")
 st.markdown("""
 **Model Architecture Updates:** 
-* **Zone-Aware Phase Split:** Granular zone processes dry multi-component burden. Deadman zone treats the structural skeleton strictly as **coke**, while liquid iron and slag are modeled as interstitial liquid holdups within the pore space.
-* **Effective Porosity & Volumetric Blending:** Calculates gas-available porosity ($\phi_{gas}$) and incorporates liquid iron/slag volumetric heat capacity contributions $(\rho C_p)$.
-* **Temperature-Dependent Gas & Interphase Dynamics:** Full polynomial functions for gas expansion and heat transfer coefficients.
+* **Multiphase Pore Fluid Mixture:** Pore fluid properties ($\rho_{fluid}, C_{p,fluid}, k_{fluid}, \mu_{fluid}$) use saturation-weighted averages. $C_{p,fluid}$ is strictly computed as a direct saturation-weighted sum of phase specific heats without density weighting.
+* **Temperature-Dependent Melts & Gas:** Full temperature coefficients ($A + B\cdot T$) enabled for liquid iron, liquid slag, and gas phases.
+* **Effective Sauter Diameter ($d_{p,eff}$):** Computed via volume-fraction-weighted harmonic mean of solid particles.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -101,21 +101,50 @@ for mat in ['sinter', 'pellet', 'lump']:
         volumes[mat] = 0.0
         materials[mat] = materials.get(mat, {'true_density': 1.0, 'bulk_density': 1.0, 'dp': 0.02, 'cp_coeffs': (0,0,0), 'k_coeffs': (0,0,0)})
 
-# --- Sidebar: Liquid Melts Holdup (Only active in Deadman Zone) ---
-s_iron, rho_iron, cp_iron = 0.0, 7000.0, 800.0
-s_slag, rho_slag, cp_slag = 0.0, 2600.0, 1200.0
+# --- Sidebar: Liquid Melts Holdup & Temperature Coefficients ---
+s_iron, mu_iron = 0.0, 0.005
+rho_iron_A, rho_iron_B = 7000.0, -0.5
+cp_iron_A, cp_iron_B = 800.0, 0.05
+k_iron_A, k_iron_B = 30.0, 0.0
+
+s_slag, mu_slag = 0.0, 0.05
+rho_slag_A, rho_slag_B = 2600.0, -0.2
+cp_slag_A, cp_slag_B = 1200.0, 0.1
+k_slag_A, k_slag_B = 3.5, 0.0
 
 if is_deadman:
-    st.sidebar.header("🧪 Deadman Liquid Melts Holdup")
-    with st.sidebar.expander("Liquid Iron & Slag Parameters", expanded=True):
-        s_iron = st.slider("Liquid Iron Saturation (s_iron)", 0.0, 0.7, 0.15, 0.01, format="%.2f")
-        rho_iron = st.number_input("Liquid Iron Density ρ_iron (kg/m³)", value=7000.0, step=50.0)
-        cp_iron = st.number_input("Liquid Iron Specific Heat Cp_iron (J/kg·K)", value=800.0, step=10.0)
-        
-        st.divider()
-        s_slag = st.slider("Liquid Slag Saturation (s_slag)", 0.0, 0.7, 0.10, 0.01, format="%.2f")
-        rho_slag = st.number_input("Liquid Slag Density ρ_slag (kg/m³)", value=2600.0, step=50.0)
-        cp_slag = st.number_input("Liquid Slag Specific Heat Cp_slag (J/kg·K)", value=1200.0, step=10.0)
+    st.sidebar.header("🧪 Deadman Liquid Melts & Properties")
+    with st.sidebar.expander("Liquid Iron Parameters & T-Coeffs", expanded=True):
+        s_iron = st.slider("Iron Saturation (s_iron)", 0.0, 0.7, 0.15, 0.01, format="%.2f")
+        mu_iron = st.number_input("Iron Viscosity μ_iron (Pa·s)", value=0.005, format="%.4f")
+        st.markdown("**Density ρ_iron(T) = A + B·T**")
+        col_ri1, col_ri2 = st.columns(2)
+        rho_iron_A = col_ri1.number_input("ρ_iron A", value=7000.0, key="ri_a")
+        rho_iron_B = col_ri2.number_input("ρ_iron B", value=-0.5, key="ri_b")
+        st.markdown("**Specific Heat Cp_iron(T) = A + B·T**")
+        col_ci1, col_ci2 = st.columns(2)
+        cp_iron_A = col_ci1.number_input("Cp_iron A", value=800.0, key="cpi_a")
+        cp_iron_B = col_ci2.number_input("Cp_iron B", value=0.05, key="cpi_b")
+        st.markdown("**Conductivity k_iron(T) = A + B·T**")
+        col_ki1, col_ki2 = st.columns(2)
+        k_iron_A = col_ki1.number_input("k_iron A", value=30.0, key="ki_a")
+        k_iron_B = col_ki2.number_input("k_iron B", value=0.0, key="ki_b")
+
+    with st.sidebar.expander("Liquid Slag Parameters & T-Coeffs", expanded=False):
+        s_slag = st.slider("Slag Saturation (s_slag)", 0.0, 0.7, 0.10, 0.01, format="%.2f")
+        mu_slag = st.number_input("Slag Viscosity μ_slag (Pa·s)", value=0.05, format="%.3f")
+        st.markdown("**Density ρ_slag(T) = A + B·T**")
+        col_rs1, col_rs2 = st.columns(2)
+        rho_slag_A = col_rs1.number_input("ρ_slag A", value=2600.0, key="rs_a")
+        rho_slag_B = col_rs2.number_input("ρ_slag B", value=-0.2, key="rs_b")
+        st.markdown("**Specific Heat Cp_slag(T) = A + B·T**")
+        col_cs1, col_cs2 = st.columns(2)
+        cp_slag_A = col_cs1.number_input("Cp_slag A", value=1200.0, key="cps_a")
+        cp_slag_B = col_cs2.number_input("Cp_slag B", value=0.1, key="cps_b")
+        st.markdown("**Conductivity k_slag(T) = A + B·T**")
+        col_ks1, col_ks2 = st.columns(2)
+        k_slag_A = col_ks1.number_input("k_slag A", value=3.5, key="ks_a")
+        k_slag_B = col_ks2.number_input("k_slag B", value=0.0, key="ks_b")
 
 # --- Advanced Settings (Gas Flow & Temperature-Dependent Polynomials) ---
 st.sidebar.header("💨 Gas Flow Properties & Polynomials")
@@ -154,9 +183,9 @@ mass_fractions = {mat: m / total_mass for mat, m in masses.items()}
 weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials[mat]['true_density'])) for mat, vol in volumes.items() if materials[mat]['true_density'] > 0)
 phi = weighted_void_sum / total_volume
 
-# Effective porosity available for gas flow when liquid holdup is present
+# Pore phase saturations
 s_liquid_total = s_iron + s_slag
-phi_gas = phi * max(0.0, (1.0 - s_liquid_total))
+s_gas = max(0.0, 1.0 - s_liquid_total)
 
 # --- Physics Calculation Engine ---
 def calculate_physics(T):
@@ -187,39 +216,57 @@ def calculate_physics(T):
     cp_s_eff = cp_s * (1.0 - phi)
     ks_s_eff = ks_s * (1.0 - phi)
 
-    # Liquid melt volumetric heat capacity contributions (for deadman / accumulation zones)
-    vol_cp_iron = phi * s_iron * rho_iron * cp_iron
-    vol_cp_slag = phi * s_slag * rho_slag * cp_slag
-
     # Effective Sauter Mean Diameter via Harmonic Mean of solid volume fractions
     inv_dp_sum = sum(vol_fracs[m] / materials[m]['dp'] for m in vol_fracs if materials[m]['dp'] > 0)
     dp_eff = (1.0 / inv_dp_sum) if inv_dp_sum > 0 else 0.025
 
-    # Temperature-Dependent Gas Properties via Polynomial Evaluation
+    # Pure Fluid Properties at Temperature T
     rho_g = rhog_A + rhog_B * T + rhog_C * (T ** 2) + rhog_D * (T ** 3)
     mu_g = mu_A + mu_B * T + mu_C * (T ** 2) + mu_D * (T ** 3)
     cp_g = cpg_A + cpg_B * T + cpg_C * (T ** 2) + cpg_D * (T ** 3)
-    gas_conductivity = kg_A + kg_B * T + kg_C * (T ** 2) + kg_D * (T ** 3)
+    kg = kg_A + kg_B * T + kg_C * (T ** 2) + kg_D * (T ** 3)
 
-    # Interphase Heat Transfer (Wakao and Kaguei using gas-available porosity / velocity path)
-    Re = (rho_g * vg * dp_eff) / mu_g if mu_g > 0 else 0
-    Pr = (cp_g * mu_g) / gas_conductivity if gas_conductivity > 0 else 0
+    rho_iron = rho_iron_A + rho_iron_B * T
+    cp_iron = cp_iron_A + cp_iron_B * T
+    k_iron = k_iron_A + k_iron_B * T
+
+    rho_slag = rho_slag_A + rho_slag_B * T
+    cp_slag = cp_slag_A + cp_slag_B * T
+    k_slag = k_slag_A + k_slag_B * T
+
+    # Multiphase Pore Fluid Mixture Averaging (No density weighting on Cp)
+    if is_deadman:
+        rho_fluid = (s_gas * rho_g) + (s_iron * rho_iron) + (s_slag * rho_slag)
+        cp_fluid = (s_gas * cp_g) + (s_iron * cp_iron) + (s_slag * cp_slag)
+        k_fluid = (s_gas * kg) + (s_iron * k_iron) + (s_slag * k_slag)
+        mu_fluid = (s_gas * mu_g) + (s_iron * mu_iron) + (s_slag * mu_slag)
+    else:
+        rho_fluid = rho_g
+        cp_fluid = cp_g
+        k_fluid = kg
+        mu_fluid = mu_g
+
+    # Interphase Heat Transfer (Wakao and Kaguei using pore fluid properties)
+    Re = (rho_fluid * vg * dp_eff) / mu_fluid if mu_fluid > 0 else 0
+    Pr = (cp_fluid * mu_fluid) / k_fluid if k_fluid > 0 else 0
     Nu = 2.0 + 1.1 * (Pr ** (1/3)) * (Re ** 0.6)
     
-    h_sf = (Nu * gas_conductivity) / dp_eff if dp_eff > 0 else 0
+    h_sf = (Nu * k_fluid) / dp_eff if dp_eff > 0 else 0
     a_sf = (6.0 * (1.0 - phi)) / dp_eff if dp_eff > 0 else 0
     q_sf_coeff = h_sf * a_sf
 
-    gas_state = {'rho': rho_g, 'mu': mu_g, 'cp': cp_g, 'k': gas_conductivity}
+    fluid_state = {'rho': rho_fluid, 'cp': cp_fluid, 'k': k_fluid, 'mu': mu_fluid, 'rhog': rho_g, 'cpg': cp_g, 'kg': kg, 'mug': mu_g}
     coeffs = {
         'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C), 
         'rhog': (rhog_A, rhog_B, rhog_C, rhog_D),
-        'mu': (mu_A, mu_B, mu_C, mu_D), 'cpg': (cpg_A, cpg_B, cpg_C, cpg_D), 'kg': (kg_A, kg_B, kg_C, kg_D)
+        'mu': (mu_A, mu_B, mu_C, mu_D), 'cpg': (cpg_A, cpg_B, cpg_C, cpg_D), 'kg': (kg_A, kg_B, kg_C, kg_D),
+        'rho_iron': (rho_iron_A, rho_iron_B), 'cp_iron': (cp_iron_A, cp_iron_B), 'k_iron': (k_iron_A, k_iron_B),
+        'rho_slag': (rho_slag_A, rho_slag_B), 'cp_slag': (cp_slag_A, cp_slag_B), 'k_slag': (k_slag_A, k_slag_B)
     }
-    return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (vol_cp_iron, vol_cp_slag), (dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, gas_state), coeffs
+    return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state), coeffs
 
-(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (vol_cp_iron, vol_cp_slag), gas_interphase, coeffs = calculate_physics(temperature_k)
-dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, gas_state = gas_interphase
+(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), fluid_interphase, coeffs = calculate_physics(temperature_k)
+dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state = fluid_interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
 rhog_A, rhog_B, rhog_C, rhog_D = coeffs['rhog']
@@ -229,16 +276,16 @@ kg_A, kg_B, kg_C, kg_D = coeffs['kg']
 
 # --- Display Results ---
 st.markdown("---")
-st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K (Total Void φ = {phi:.4f} | Gas Porosity φ_gas = {phi_gas:.4f})")
+st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K (Total Porosity φ = {phi:.4f})")
 
 tab1, tab2, tab3 = st.tabs([
     "🟢 COMSOL LTNE: Solid Sub-Node", 
-    "🟠 COMSOL Heat Transfer in Solids (Manual Matrix + Melts)",
-    "⚙️ Temperature-Dependent Gas Dynamics & Coupling (q_sf)"
+    "🟠 COMSOL Solid Matrix (Coke Skeleton + Melts)",
+    "⚙️ Multiphase Pore Fluid Mixture Properties & Coupling"
 ])
 
 with tab1:
-    st.info("💡 **LTNE Solid Matrix.** Uses True Density and intrinsic solid skeletal properties (Coke skeleton).")
+    st.info("💡 **LTNE Solid Matrix.** Uses True Density and intrinsic solid skeletal properties (Coke).")
     col1, col2, col3 = st.columns(3)
     col1.metric("True Density (ρ_s)", f"{rho_s:.2f} kg/m³")
     col2.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
@@ -250,11 +297,11 @@ with tab1:
 
 with tab2:
     if is_deadman:
-        st.info("💡 **Deadman Zone Effective Matrix.** Includes coke skeleton scaling plus liquid iron and slag volumetric heat capacity contributions.")
+        st.info("💡 **Deadman Effective Matrix.** Includes coke skeleton scaling plus liquid iron and slag volumetric heat capacity contributions.")
         col1, col2, col3 = st.columns(3)
         col1.metric("Bulk Density (ρ_bulk)", f"{rho_bulk:.2f} kg/m³")
-        col2.metric("Liquid Iron Holdup Vol. Cp", f"{vol_cp_iron:.1f} J/(m³·K)")
-        col3.metric("Liquid Slag Holdup Vol. Cp", f"{vol_cp_slag:.1f} J/(m³·K)")
+        col2.metric("Iron Saturation (s_iron)", f"{s_iron:.2f}")
+        col3.metric("Slag Saturation (s_slag)", f"{s_slag:.2f}")
         
         st.markdown("#### Deadman Effective Volumetric Heat Capacity Formulation")
         st.latex(r"(\rho C_p)_{eff,deadman} = (1 - \phi)\rho_s C_{p,s}(T) + \phi \left[ s_{iron}\rho_{iron}C_{p,iron} + s_{slag}\rho_{slag}C_{p,slag} \right]")
@@ -270,53 +317,58 @@ with tab2:
         st.latex(rf"k_{{eff}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
 
 with tab3:
-    st.info(f"💡 **Gas Dynamics & Coupling evaluated as functions of T** (Evaluated at T = {temperature_k:.1f} K).")
+    st.info(f"💡 **Multiphase Pore Fluid Mixture evaluated at T = {temperature_k:.1f} K** (Gas + Liquid Iron + Liquid Slag).")
     
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Reynolds Number Re(T)", f"{Re:.1f}")
-    col2.metric("Prandtl Number Pr(T)", f"{Pr:.3f}")
-    col3.metric("Nusselt Number Nu(T)", f"{Nu:.2f}")
-    col4.metric("Gas-Available Porosity φ_gas", f"{phi_gas:.4f}")
-    
-    st.markdown("#### Gas Properties as Functions of Temperature ($T$)")
-    gcol1, gcol2, gcol3, gcol4 = st.columns(4)
-    gcol1.metric("Gas Density ρ_g(T)", f"{gas_state['rho']:.3f} kg/m³")
-    gcol2.metric("Viscosity μ_g(T)", f"{gas_state['mu']:.2e} Pa·s")
-    gcol3.metric("Specific Heat Cp_g(T)", f"{gas_state['cp']:.2f} J/(kg·K)")
-    gcol4.metric("Conductivity k_g(T)", f"{gas_state['k']:.4f} W/(m·K)")
+    col1.metric("Mixture Density ρ_fluid(T)", f"{fluid_state['rho']:.3f} kg/m³")
+    col2.metric("Mixture Specific Heat Cp_fluid(T)", f"{fluid_state['cp']:.2f} J/(kg·K)")
+    col3.metric("Mixture Conductivity k_fluid(T)", f"{fluid_state['k']:.4f} W/(m·K)")
+    col4.metric("Mixture Viscosity μ_fluid(T)", f"{fluid_state['mu']:.4f} Pa·s")
 
-    st.markdown("#### Interphase Heat Transfer Coefficient & Coupling Terms as Functions of ($T$)")
-    col5, col6 = st.columns(2)
-    col5.metric("Specific Surface Area a_sf", f"{a_sf:.1f} m²/m³")
-    col6.metric("Interphase HTC h_sf(T)", f"{h_sf:.2f} W/(m²·K)")
-    
-    st.markdown("#### Analytical Temperature-Dependent Formulation")
-    st.latex(r"Re(T) = \frac{\rho_g(T) \cdot v_g \cdot d_{p,eff}}{\mu_g(T)}")
-    st.latex(r"Pr(T) = \frac{C_{p,g}(T) \cdot \mu_g(T)}{k_g(T)}")
-    st.latex(r"Nu(T) = 2.0 + 1.1 \cdot [Pr(T)]^{1/3} \cdot [Re(T)]^{0.6}")
-    st.latex(rf"h_{{sf}}(T) = \frac{{Nu(T) \cdot k_g(T)}}{{d_{{p,eff}}}} = {h_sf:.2f} \text{{ [W/(m²·K)] at selected T}}")
+    st.markdown("#### Dimensionless Numbers & Interphase Coupling")
+    dcol1, dcol2, dcol3 = st.columns(3)
+    dcol1.metric("Reynolds Number Re(T)", f"{Re:.1f}")
+    dcol2.metric("Prandtl Number Pr(T)", f"{Pr:.3f}")
+    dcol3.metric("Nusselt Number Nu(T)", f"{Nu:.2f}")
+
+    st.markdown("#### Analytical Mixture Formulations in Pores")
+    st.latex(r"\rho_{fluid}(T) = s_{gas}\rho_g(T) + s_{iron}\rho_{iron}(T) + s_{slag}\rho_{slag}(T)")
+    st.latex(r"C_{p,fluid}(T) = s_{gas}C_{p,g}(T) + s_{iron}C_{p,iron}(T) + s_{slag}C_{p,slag}(T)")
+    st.latex(r"k_{fluid}(T) = s_{gas}k_g(T) + s_{iron}k_{iron}(T) + s_{slag}k_{slag}(T)")
     st.latex(rf"q_{{sf}}(T_{{fluid}}, T_{{solid}}, T) = {a_sf:.2f} \cdot h_{{sf}}(T) \cdot (T_{{fluid}} - T_{{solid}}) \text{{ [W/m³]}}")
 
 # --- COMSOL Text Export Content Generator ---
 deadman_export_text = f"""
 --------------------------------------------------------------------
-DEADMAN ZONE LIQUID MELTS HOOK (INTERSTITIAL PHASES)
+DEADMAN ZONE MULTIPHASE PORE FLUID MIXTURE (COMSOL)
 --------------------------------------------------------------------
-Liquid Iron Saturation (s_iron) = {s_iron:.4f}
-Liquid Iron Density (rho_iron)   = {rho_iron:.2f} [kg/m^3]
-Liquid Iron Specific Heat (Cp_iron) = {cp_iron:.2f} [J/(kg·K)]
+Gas Saturation (s_gas)   = {s_gas:.4f}
+Iron Saturation (s_iron) = {s_iron:.4f}
+Slag Saturation (s_slag) = {s_slag:.4f}
 
-Liquid Slag Saturation (s_slag)  = {s_slag:.4f}
-Liquid Slag Density (rho_slag)   = {rho_slag:.2f} [kg/m^3]
-Liquid Slag Specific Heat (Cp_slag) = {cp_slag:.2f} [J/(kg·K)]
+[Analytic Function: Liquid Iron Density rho_iron(T)]
+Expression: {rho_iron_A:.2f} + ({rho_iron_B:.2f})*T
+[Analytic Function: Liquid Iron Specific Heat Cp_iron(T)]
+Expression: {cp_iron_A:.2f} + ({cp_iron_B:.2f})*T
+[Analytic Function: Liquid Iron Conductivity k_iron(T)]
+Expression: {k_iron_A:.2f} + ({k_iron_B:.2f})*T
 
-Gas-Available Porosity (phi_gas) = {phi_gas:.4f}
-Volumetric Heat Capacity Contribution (Iron) = {vol_cp_iron:.2f} [J/(m^3·K)]
-Volumetric Heat Capacity Contribution (Slag) = {vol_cp_slag:.2f} [J/(m^3·K)]
+[Analytic Function: Liquid Slag Density rho_slag(T)]
+Expression: {rho_slag_A:.2f} + ({rho_slag_B:.2f})*T
+[Analytic Function: Liquid Slag Specific Heat Cp_slag(T)]
+Expression: {cp_slag_A:.2f} + ({cp_slag_B:.2f})*T
+[Analytic Function: Liquid Slag Conductivity k_slag(T)]
+Expression: {k_slag_A:.2f} + ({k_slag_B:.2f})*T
+
+[Mixture Fluid Property Expressions in Pores]
+rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)
+Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)
+k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)
+mu_fluid(T)  = {s_gas:.4f}*mu_g(T) + {s_iron:.4f}*{mu_iron:.4f} + {s_slag:.4f}*{mu_slag:.4f}
 """ if is_deadman else ""
 
 comsol_text = f"""====================================================================
-BLAST FURNACE FULL TEMPERATURE-DEPENDENT MODEL EXPORT (COMSOL)
+BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)
 Operating Zone: {bf_zone}
 Evaluated at Reference Temp: {temperature_k:.2f} K | Total Porosity (phi): {phi:.4f}
 ====================================================================
@@ -335,7 +387,7 @@ Expression: {cpg_A:.6f} + ({cpg_B:.6e})*T + ({cpg_C:.6e})*T^2 + ({cpg_D:.6e})*T^
 
 [Analytic Function: Gas Conductivity k_g(T)]
 Expression: {kg_A:.6f} + ({kg_B:.6e})*T + ({kg_C:.6e})*T^2 + ({kg_D:.6e})*T^3
-
+{deadman_export_text}
 --------------------------------------------------------------------
 2. HEAT TRANSFER IN POROUS MEDIA (LTNE) - SOLID SUB-NODE (Coke Skeleton)
 --------------------------------------------------------------------
@@ -347,26 +399,26 @@ Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
 
 [Analytic Function: Solid Conductivity k_s(T)]
 Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
-{deadman_export_text}
+
 --------------------------------------------------------------------
 3. INTERPHASE HEAT TRANSFER COUPLING (FLUID-SOLID) AS FUNCTIONS OF T
 --------------------------------------------------------------------
 dp_eff = {dp_eff:.6f} [m]
 a_sf = {a_sf:.6f} [m^2/m^3]
 
-// Wakao-Kaguei Correlations as Functions of Temperature T:
-// Re(T) = (rho_g(T) * vg * dp_eff) / mu_g(T)
-// Pr(T) = (cp_g(T) * mu_g(T)) / kg(T)
+// Wakao-Kaguei Correlations using Pore Fluid Mixture Properties:
+// Re(T) = (rho_fluid(T) * vg * dp_eff) / mu_fluid(T)
+// Pr(T) = (Cp_fluid(T) * mu_fluid(T)) / k_fluid(T)
 // Nu(T) = 2.0 + 1.1 * (Pr(T))^(1/3) * (Re(T))^0.6
-// h_sf(T) = (Nu(T) * kg(T)) / dp_eff
+// h_sf(T) = (Nu(T) * k_fluid(T)) / dp_eff
 // q_sf(T_fluid, T_solid, T) = a_sf * h_sf(T) * (T_fluid - T_solid)
 
 ====================================================================
 """
 
 st.download_button(
-    label="📥 Download Full Temperature-Dependent COMSOL Variables (.txt)",
+    label="📥 Download Multiphase Temperature-Dependent COMSOL Variables (.txt)",
     data=comsol_text,
-    file_name=f"COMSOL_BF_{bf_zone.split()[0]}_Temperature_Functions.txt",
+    file_name=f"COMSOL_BF_{bf_zone.split()[0]}_Multiphase_Functions.txt",
     mime="text/plain"
 )
