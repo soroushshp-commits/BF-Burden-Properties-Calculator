@@ -224,7 +224,7 @@ with tab2:
     st.latex(rf"k_{{eff}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
 
 with tab3:
-    st.info(f"💡 **Gas Dynamics evaluated at $T = {temperature_k:.1f}$ K.** Effective Sauter diameter $d_{p,eff} = {dp_eff:.4f}$ m.")
+    st.info(f"💡 **Gas Dynamics evaluated at T = {temperature_k:.1f} K.** Effective Sauter diameter d_p,eff = {dp_eff:.4f} m.")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Reynolds Number (Re)", f"{Re:.1f}")
     col2.metric("Prandtl Number (Pr)", f"{Pr:.3f}")
@@ -259,7 +259,7 @@ porosity_phi = {phi:.4f}
 Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
 
 [Analytic Function: Solid Conductivity k_s(T)]
-Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
+Expression: {ks_A:.6f} + ({ks_B:.6f})*T + ({ks_C:.6e})*T^2
 
 --------------------------------------------------------------------
 2. HEAT TRANSFER IN SOLIDS (MANUAL COUPLING SOLID MATRIX)
