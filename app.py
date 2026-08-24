@@ -16,17 +16,17 @@ COMSOL Multiphysics and custom numerical transport models.
 """)
 
 # --- Helper Function for Paired Slider + Number Input ---
-def paired_input(label, min_val, max_val, default_val, step, key):
+def paired_input(label, min_val, max_val, default_val, step, key, container=st.sidebar):
     if key not in st.session_state:
         st.session_state[key] = default_val
         
-    st.sidebar.markdown(f"**{label}**")
-    col1, col2 = st.sidebar.columns([3, 2])
+    container.markdown(f"**{label}**")
+    col1, col2 = container.columns([3, 2])
     
     with col1:
-        s_val = st.slider(f"{label} slider", min_val, max_val, float(st.session_state[key]), step=step, key=f"s_{key}", label_visibility="collapsed")
+        s_val = container.slider(f"{label} slider", min_val, max_val, float(st.session_state[key]), step=step, key=f"s_{key}", label_visibility="collapsed")
     with col2:
-        n_val = st.number_input(f"{label} number", min_val, max_val, float(st.session_state[key]), step=step, key=f"n_{key}", label_visibility="collapsed")
+        n_val = container.number_input(f"{label} number", min_val, max_val, float(st.session_state[key]), step=step, key=f"n_{key}", label_visibility="collapsed")
         
     if s_val != st.session_state[key]:
         st.session_state[key] = s_val
@@ -113,16 +113,16 @@ else:
     st.sidebar.info("Deadman Zone consists of 100% packed Coke skeleton saturated with trickling liquid melts.")
     mass_fractions = {'coke': 1.0, 'sinter': 0.0, 'pellet': 0.0, 'lump': 0.0}
 
-with st.sidebar.expander("Advanced Bed & Void Settings"):
-    bed_void_fraction = paired_input("Bed Void Fraction (ϕ)", 0.0, 1.0, 0.35 if "Deadman" in bf_zone else 0.40, 0.01, "phi_val")
+with st.sidebar.expander("Advanced Bed & Void Settings") as adv_exp:
+    bed_void_fraction = paired_input("Bed Void Fraction (ϕ)", 0.0, 1.0, 0.35 if "Deadman" in bf_zone else 0.40, 0.01, "phi_val", container=adv_exp)
     
     if "Deadman" in bf_zone:
-        liquid_holdup = paired_input("Liquid Melt Saturation", 0.0, 1.0, 0.35, 0.01, "liq_hold")
+        liquid_holdup = paired_input("Liquid Melt Saturation", 0.0, 1.0, 0.35, 0.01, "liq_hold", container=adv_exp)
     else:
         liquid_holdup = 0.0
         
-    mean_particle_diameter = paired_input("Mean Particle Diameter (m)", 0.0, 1.0, 0.04 if "Deadman" in bf_zone else 0.025, 0.001, "dp_val")
-    gas_conductivity = paired_input("Gas Conductivity (W/m·K)", 0.0, 1.0, 0.04, 0.005, "kg_val")
+    mean_particle_diameter = paired_input("Mean Particle Diameter (m)", 0.0, 1.0, 0.04 if "Deadman" in bf_zone else 0.025, 0.001, "dp_val", container=adv_exp)
+    gas_conductivity = paired_input("Gas Conductivity (W/m·K)", 0.0, 1.0, 0.04, 0.005, "kg_val", container=adv_exp)
 
 # --- Calculation Engine ---
 def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, materials, zone_type):
@@ -192,7 +192,7 @@ with col1:
     if "Deadman" in bf_zone:
         st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
     else:
-        st.metric(label="Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
+        st.metric(label=f"Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
     st.metric(label=f"Packed Bed Effective Conductivity (k_eff) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
@@ -227,4 +227,3 @@ st.markdown("---")
 st.subheader("📋 Zone Composition Breakdown")
 chart_data = {mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()}
 st.bar_chart(chart_data)
-    
