@@ -15,6 +15,26 @@ This application computes temperature-dependent effective thermophysical propert
 COMSOL Multiphysics and custom numerical transport models.
 """)
 
+# --- Helper Function for Paired Slider + Number Input ---
+def paired_input(label, min_val, max_val, default_val, step, key):
+    if key not in st.session_state:
+        st.session_state[key] = default_val
+        
+    st.sidebar.markdown(f"**{label}**")
+    col1, col2 = st.sidebar.columns([3, 2])
+    
+    with col1:
+        s_val = st.slider(f"{label} slider", min_val, max_val, float(st.session_state[key]), step=step, key=f"s_{key}", label_visibility="collapsed")
+    with col2:
+        n_val = st.number_input(f"{label} number", min_val, max_val, float(st.session_state[key]), step=step, key=f"n_{key}", label_visibility="collapsed")
+        
+    if s_val != st.session_state[key]:
+        st.session_state[key] = s_val
+    elif n_val != st.session_state[key]:
+        st.session_state[key] = n_val
+        
+    return st.session_state[key]
+
 # --- Sidebar: Zone Selection ---
 st.sidebar.header("🗺️ Blast Furnace Region")
 bf_zone = st.sidebar.radio(
@@ -69,23 +89,17 @@ for mat_name in ['coke', 'sinter', 'pellet', 'lump']:
             'k_coeffs': (k_a, k_b, k_c)
         }
 
-# --- Sidebar: Operating Conditions & Inputs based on Zone ---
+# --- Sidebar: Operating Conditions & Inputs ---
 st.sidebar.header("⚙️ Operating Conditions")
-temperature_k = st.sidebar.slider(
-    "Operating Temperature (K)", 
-    min_value=298.0, 
-    max_value=2200.0, 
-    value=1600.0 if "Deadman" in bf_zone else 1000.0, 
-    step=10.0
-)
+temperature_k = paired_input("Operating Temperature (K)", 0.0, 3000.0, 1600.0 if "Deadman" in bf_zone else 1000.0, 10.0, "temp_k")
 
 mass_fractions = {}
 if "Granular" in bf_zone:
     st.sidebar.subheader("Granular Burden Structure (%)")
-    coke_p = st.sidebar.slider("Coke (%)", 0.0, 100.0, 20.0, 1.0)
-    sinter_p = st.sidebar.slider("Sinter (%)", 0.0, 100.0, 35.0, 1.0)
-    pellet_p = st.sidebar.slider("Pellet (%)", 0.0, 100.0, 30.0, 1.0)
-    lump_p = st.sidebar.slider("Lump Ore (%)", 0.0, 100.0, 15.0, 1.0)
+    coke_p = paired_input("Coke (%)", 0.0, 100.0, 20.0, 1.0, "coke_p")
+    sinter_p = paired_input("Sinter (%)", 0.0, 100.0, 35.0, 1.0, "sinter_p")
+    pellet_p = paired_input("Pellet (%)", 0.0, 100.0, 30.0, 1.0, "pellet_p")
+    lump_p = paired_input("Lump Ore (%)", 0.0, 100.0, 15.0, 1.0, "lump_p")
     
     total_p = coke_p + sinter_p + pellet_p + lump_p
     if total_p == 0: total_p = 1.0
@@ -96,19 +110,19 @@ if "Granular" in bf_zone:
         'lump': lump_p / total_p
     }
 else:
-    st.sidebar.info("Deadman Zone consists of 100% packed Coke skeleton saturated with trickling liquid melts (Slag/Iron).")
+    st.sidebar.info("Deadman Zone consists of 100% packed Coke skeleton saturated with trickling liquid melts.")
     mass_fractions = {'coke': 1.0, 'sinter': 0.0, 'pellet': 0.0, 'lump': 0.0}
 
 with st.sidebar.expander("Advanced Bed & Void Settings"):
-    bed_void_fraction = st.slider("Total Bed Void Fraction (φ)", 0.25, 0.50, 0.35 if "Deadman" in bf_zone else 0.40, 0.01)
+    bed_void_fraction = paired_input("Bed Void Fraction (ϕ)", 0.0, 1.0, 0.35 if "Deadman" in bf_zone else 0.40, 0.01, "phi_val")
+    
     if "Deadman" in bf_zone:
-        liquid_holdup = st.slider("Liquid Melt Saturation in Voids (Slag + Iron)", 0.0, 0.8, 0.35, 0.05, 
-                                   help="Fraction of pore space occupied by liquid metal and slag.")
+        liquid_holdup = paired_input("Liquid Melt Saturation", 0.0, 1.0, 0.35, 0.01, "liq_hold")
     else:
         liquid_holdup = 0.0
         
-    mean_particle_diameter = st.slider("Mean Particle Diameter (m)", 0.01, 0.08, 0.04 if "Deadman" in bf_zone else 0.025, 0.001)
-    gas_conductivity = 0.04
+    mean_particle_diameter = paired_input("Mean Particle Diameter (m)", 0.0, 1.0, 0.04 if "Deadman" in bf_zone else 0.025, 0.001, "dp_val")
+    gas_conductivity = paired_input("Gas Conductivity (W/m·K)", 0.0, 1.0, 0.04, 0.005, "kg_val")
 
 # --- Calculation Engine ---
 def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, materials, zone_type):
@@ -174,16 +188,16 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.metric(label=f"Effective Specific Heat (Cp) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
-    st.metric(label=f"Effective Bulk Density (ρ_bed)", value=f"{rho_bed_effective:.2f} kg/m³")
+    st.metric(label="Effective Bulk Density (ρ_bed)", value=f"{rho_bed_effective:.2f} kg/m³")
     if "Deadman" in bf_zone:
         st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
     else:
-        st.metric(label=f"Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
+        st.metric(label="Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
     st.metric(label=f"Packed Bed Effective Conductivity (k_eff) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
     st.metric(label=f"Equivalent Solid Conductivity (ks) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
-    st.metric(label=f"Bed Void Fraction (ϕ)", value=f"{bed_void_fraction:.2f}")
+    st.metric(label="Bed Void Fraction (ϕ)", value=f"{bed_void_fraction:.2f}")
 
 # --- Analytical Formulas Display ---
 st.markdown("---")
@@ -205,7 +219,7 @@ Based on your region selection (**{bf_zone}**), the active thermophysical functi
    $$\\rho_{{bed}} = {rho_bed_effective:.2f} \\;\\; \text{{[kg/m³]}}$$
 
 4. **Packed Bed Effective Thermal Conductivity $k_{{eff}}(T)$**:
-   $$k_{{eff}}(T) = k_g \cdot \left(\phi + \frac{{1 - \phi}}{{0.8 \cdot \frac{{k_g}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot \epsilon \cdot \sigma \cdot d_p \cdot T^3$$
+   $$k_{{eff}}(T) = {gas_conductivity} \cdot \left({bed_void_fraction} + \frac{{1 - {bed_void_fraction}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot \epsilon \cdot \sigma \cdot {mean_particle_diameter} \cdot T^3$$
 """)
 
 # Visual Breakdown Chart
@@ -213,3 +227,4 @@ st.markdown("---")
 st.subheader("📋 Zone Composition Breakdown")
 chart_data = {mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()}
 st.bar_chart(chart_data)
+    
