@@ -169,17 +169,18 @@ st.subheader("📐 Final Analytical Formulas (as a Function of Temperature $T$)"
 cp_A, cp_B, cp_C = formula_coeffs['cp']
 ks_A, ks_B, ks_C = formula_coeffs['ks']
 
-st.markdown(f"""
+# NOTE: Using a raw f-string (rf"""...""") fixes the escape sequence / syntax error with LaTeX backslashes (\rho, \text)
+st.markdown(rf"""
 Based on your current burden mass fractions and coefficient overrides, the effective properties are governed by the following temperature-dependent expressions ($T$ in Kelvin):
 
 1. **Effective Specific Heat Capacity $C_{{p,\text{{eff}}}}(T)$**:
-   $$C_{{p,\text{{eff}}}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \\;\\; \\text{{[J/(kg·K)]}}$$
+   $$C_{{p,\text{{eff}}}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \\;\\; \text{{[J/(kg·K)]}}$$
 
 2. **Equivalent Solid Thermal Conductivity $k_{{s,\text{{eff}}}}(T)$**:
-   $$k_{{s,\text{{eff}}}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \\;\\; \\text{{[W/(m·K)]}}$$
+   $$k_{{s,\text{{eff}}}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \\;\\; \text{{[W/(m·K)]}}$$
 
 3. **Effective Packed Bed Bulk Density $\rho_{{\text{{bed}}}}$** (Constant with respect to $T$):
-   $$\rho_{{\text{{bed}}}} = {rho_bed_effective:.2f} \\;\\; \\text{{[kg/m³]}}$$
+   $$\rho_{{\text{{bed}}}} = {rho_bed_effective:.2f} \\;\\; \text{{[kg/m³]}}$$
 
 4. **Packed Bed Effective Thermal Conductivity $k_{{\text{{eff}}}}(T)$** (Yagi-Kunii formulation evaluated with current $ks$):
    $$k_{{\text{{eff}}}}(T) = {gas_conductivity} \cdot \left({bed_void_fraction} + \frac{{1 - {bed_void_fraction}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_eff:.4f}}} + 0.95}}\right) + (4 \cdot 0.95 \cdot 0.88 \cdot 5.67\times 10^{{-8}} \cdot {mean_particle_diameter}) \cdot T^3$$
