@@ -10,9 +10,9 @@ st.set_page_config(
 
 st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator")
 st.markdown("""
-This application computes temperature-dependent effective thermophysical properties for both the 
-**Granular Zone (Dry Stack)** and the **Deadman / Lower Coke Zone** of a blast furnace, optimized for 
-COMSOL Multiphysics and custom numerical transport models.
+This application computes temperature-dependent thermophysical properties for both the 
+**Granular Zone (Dry Stack)** and the **Deadman / Lower Coke Zone** of a blast furnace. 
+Outputs are divided for **COMSOL Porous Media Nodes** (pure solid phase) and **Standard Domains** (homogenized bed).
 """)
 
 # --- Helper Function: Synchronized Slider + Number Input via Callbacks ---
@@ -168,7 +168,7 @@ else:
 # --- Void Fraction & Mass Fractions Calculations ---
 total_volume = sum(volumes.values())
 if total_volume == 0:
-    total_volume = 1.0  # Prevent division by zero
+    total_volume = 1.0
 
 material_voids = {}
 weighted_void_sum = 0.0
@@ -199,9 +199,10 @@ with st.sidebar.expander("Advanced Bed & Void Settings") as adv_exp:
     mean_particle_diameter = paired_input("Mean Particle Diameter (m)", 0.0, 1.0, 0.04 if "Deadman" in bf_zone else 0.025, 0.001, "dp_val", container=adv_exp)
     gas_conductivity = paired_input("Gas Conductivity (W/m·K)", 0.0, 1.0, 0.04, 0.005, "kg_val", container=adv_exp)
 
-# --- Calculation Engine ---
+# --- Dual Calculation Engine ---
 def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, materials, zone_type):
-    cp_eff = 0.0
+    # --- 1. Pure Solid Phase Mixture Properties (WITHOUT Void Fraction) ---
+    cp_solid_pure = 0.0
     cp_A_eff, cp_B_eff, cp_C_eff = 0.0, 0.0, 0.0
     for mat, w in mass_fractions.items():
         if w > 0:
@@ -209,38 +210,39 @@ def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, material
             cp_A_eff += w * A
             cp_B_eff += w * B
             cp_C_eff += w * C
-            cp_eff += w * (A + B * T + C * (T ** -2))
-            
-    if "Deadman" in zone_type:
-        cp_liquid_avg = 850.0 
-        cp_eff = (1.0 - liq_holdup) * cp_eff + liq_holdup * cp_liquid_avg
+            cp_solid_pure += w * (A + B * T + C * (T ** -2))
 
     active_mats = {mat: w for mat, w in mass_fractions.items() if w > 0}
     v_solid_terms = {mat: w / materials[mat]['true_density'] for mat, w in active_mats.items()}
     total_v_solid = sum(v_solid_terms.values())
     solid_vol_fractions = {mat: v / total_v_solid for mat, v in v_solid_terms.items()} if total_v_solid > 0 else {}
     
-    ks_eff = 0.0
+    ks_solid_pure = 0.0
     ks_A_eff, ks_B_eff, ks_C_eff = 0.0, 0.0, 0.0
     for mat, x_v in solid_vol_fractions.items():
         A, B, C = materials[mat]['k_coeffs']
         ks_A_eff += x_v * A
         ks_B_eff += x_v * B
         ks_C_eff += x_v * C
-        ks_eff += x_v * (A + B * T + C * (T ** 2))
+        ks_solid_pure += x_v * (A + B * T + C * (T ** 2))
     
-    rho_solid_avg = sum(solid_vol_fractions[mat] * materials[mat]['true_density'] for mat in active_mats) if active_mats else 0.0
-    rho_bed_effective = (1.0 - phi) * rho_solid_avg
-    
+    rho_solid_pure = sum(solid_vol_fractions[mat] * materials[mat]['true_density'] for mat in active_mats) if active_mats else 0.0
+
+    # --- 2. Homogenized Packed Bed Properties (WITH Void Fraction & Radiation) ---
+    rho_bed_effective = (1.0 - phi) * rho_solid_pure
+    cp_bed_effective = cp_solid_pure
+
     if "Deadman" in zone_type:
+        cp_liquid_avg = 850.0 
         rho_liq_avg = 6500.0
-        rho_bed_effective = (1.0 - phi) * rho_solid_avg + phi * liq_holdup * rho_liq_avg
+        cp_bed_effective = (1.0 - liq_holdup) * cp_solid_pure + liq_holdup * cp_liquid_avg
+        rho_bed_effective = (1.0 - phi) * rho_solid_pure + phi * liq_holdup * rho_liq_avg
 
     sigma = 5.67e-8
     emissivity = 0.88 if "Deadman" not in zone_type else 0.92
     alpha_yk, gamma_yk, beta_yk = 0.8, 0.95, 0.95
     
-    conduction_term = kg * (phi + ((1.0 - phi) / ((alpha_yk * (kg / ks_eff)) + gamma_yk))) if ks_eff > 0 else 0
+    conduction_term = kg * (phi + ((1.0 - phi) / ((alpha_yk * (kg / ks_solid_pure)) + gamma_yk))) if ks_solid_pure > 0 else 0
     radiation_term = 4.0 * beta_yk * emissivity * sigma * dp * (T ** 3)
     k_bed_effective = conduction_term + radiation_term
     
@@ -249,53 +251,52 @@ def calculate_thermophysics(mass_fractions, T, kg, dp, phi, liq_holdup, material
         'ks': (ks_A_eff, ks_B_eff, ks_C_eff)
     }
     
-    return cp_eff, ks_eff, k_bed_effective, rho_bed_effective, rho_solid_avg, formula_coeffs
+    return (cp_solid_pure, ks_solid_pure, rho_solid_pure), (cp_bed_effective, k_bed_effective, rho_bed_effective), formula_coeffs
 
-cp_eff, ks_eff, k_bed_effective, rho_bed_effective, rho_solid_avg, formula_coeffs = calculate_thermophysics(
+(cp_s, ks_s, rho_s), (cp_bed, k_bed, rho_bed), formula_coeffs = calculate_thermophysics(
     mass_fractions, temperature_k, gas_conductivity, mean_particle_diameter, calculated_bed_void_fraction, liquid_holdup, materials, bf_zone
 )
 
 # --- Display Results ---
 st.markdown("---")
-st.subheader(f"📊 Homogenized Parameters for: {bf_zone}")
+st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K ({bf_zone})")
 
-col1, col2 = st.columns(2)
+tab_porous, tab_homogenized = st.tabs([
+    "🟢 Pure Solid Phase (For COMSOL Porous Media Node)", 
+    "🔵 Homogenized Bed Effective (For Standard Domains)"
+])
 
-with col1:
-    st.metric(label=f"Effective Specific Heat (Cp) at {temperature_k:.1f} K", value=f"{cp_eff:.2f} J/(kg·K)")
-    st.metric(label="Effective Bulk Density (ρ_bed)", value=f"{rho_bed_effective:.2f} kg/m³")
-    if "Deadman" in bf_zone:
-        st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
-    else:
-        st.metric(label="Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
+with tab_porous:
+    st.info("💡 **Use these values when configuring the Solid Phase sub-node in COMSOL's Porous Media interface.** COMSOL will apply the bed porosity (ϕ) internally.")
+    col_p1, col_p2, col_p3 = st.columns(3)
+    col_p1.metric(label="Solid Density (ρ_s)", value=f"{rho_s:.2f} kg/m³")
+    col_p2.metric(label="Solid Thermal Conductivity (k_s)", value=f"{ks_s:.3f} W/(m·K)")
+    col_p3.metric(label="Solid Specific Heat (Cp_s)", value=f"{cp_s:.2f} J/(kg·K)")
 
-with col2:
-    st.metric(label=f"Packed Bed Effective Thermal Conductivity (k_eff) at {temperature_k:.1f} K", value=f"{k_bed_effective:.3f} W/(m·K)")
-    st.metric(label=f"Equivalent Solid Conductivity (ks) at {temperature_k:.1f} K", value=f"{ks_eff:.3f} W/(m·K)")
-    st.metric(label="Calculated Bed Void Fraction (ϕ)", value=f"{calculated_bed_void_fraction:.4f}")
+with tab_homogenized:
+    st.info("💡 **Use these values if modeling the bed as a single equivalent domain** without COMSOL's Porous Media interface.")
+    col_h1, col_h2, col_h3 = st.columns(3)
+    col_h1.metric(label="Bulk Bed Density (ρ_bed)", value=f"{rho_bed:.2f} kg/m³")
+    col_h2.metric(label="Packed Bed Effective Conductivity (k_eff)", value=f"{k_bed:.3f} W/(m·K)")
+    col_h3.metric(label="Bed Effective Specific Heat (Cp_eff)", value=f"{cp_bed:.2f} J/(kg·K)")
 
 # --- Analytical Formulas & Export Section ---
 st.markdown("---")
-st.subheader("📐 Analytical Equations for COMSOL / Numerical Implementation")
+st.subheader("📐 Analytical Equations for COMSOL Implementation")
 
 cp_A, cp_B, cp_C = formula_coeffs['cp']
 ks_A, ks_B, ks_C = formula_coeffs['ks']
 emissivity_val = 0.88 if "Deadman" not in bf_zone else 0.92
 
 st.markdown(rf"""
-Based on your region selection (**{bf_zone}**), the active thermophysical functions are:
+1. **Pure Solid Phase Specific Heat $C_{{p,s}}(T)$**:
+   $$C_{{p,s}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \;\;\text{{[J/(kg·K)]}}$$
 
-1. **Effective Specific Heat Capacity $C_{{p,eff}}(T)$**:
-   $$C_{{p,eff}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \;\;\text{{[J/(kg·K)]}}$$
+2. **Pure Solid Phase Conductivity $k_{{s}}(T)$**:
+   $$k_{{s}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \;\;\text{{[W/(m·K)]}}$$
 
-2. **Equivalent Solid/Skeleton Thermal Conductivity $k_{{s,eff}}(T)$**:
-   $$k_{{s,eff}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \;\;\text{{[W/(m·K)]}}$$
-
-3. **Effective Bulk Density $\rho_{{bed}}$**:
-   $$\rho_{{bed}} = {rho_bed_effective:.2f} \;\;\text{{[kg/m³]}}$$
-
-4. **Packed Bed Effective Thermal Conductivity $k_{{eff}}(T)$**:
-   $$k_{{eff}}(T) = {gas_conductivity} \cdot \left({calculated_bed_void_fraction:.4f} + \frac{{1 - {calculated_bed_void_fraction:.4f}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot {emissivity_val} \cdot \sigma \cdot {mean_particle_diameter} \cdot T^3$$
+3. **Homogenized Bed Conductivity $k_{{eff}}(T)$** *(includes void conduction & radiation)*:
+   $$k_{{eff}}(T) = {gas_conductivity} \cdot \left({calculated_bed_void_fraction:.4f} + \frac{{1 - {calculated_bed_void_fraction:.4f}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{k_s(T)}} + 0.95}}\right) + 4 \cdot 0.95 \cdot {emissivity_val} \cdot \sigma \cdot {mean_particle_diameter} \cdot T^3$$
 """)
 
 # --- COMSOL Text Export Content Generator ---
@@ -306,35 +307,48 @@ Zone: {bf_zone}
 Operating Temperature Reference: {temperature_k:.2f} K
 ====================================================================
 
-[GLOBAL DEFINITIONS -> ANALYTIC FUNCTIONS]
+--------------------------------------------------------------------
+OPTION 1: FOR COMSOL "HEAT TRANSFER IN POROUS MEDIA" INTERFACE
+--------------------------------------------------------------------
+[Porous Medium -> Solid Material Inputs]
+rho_s = {rho_s:.2f} [kg/m^3]
 
-1. Name: Cp_eff
-   Arguments: T
-   Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
-   Units: J/(kg*K)
+Analytic Function 1 (Cp_s):
+  Name: Cp_s
+  Arguments: T
+  Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
+  Units: J/(kg*K)
 
-2. Name: ks_eff
-   Arguments: T
-   Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
-   Units: W/(m*K)
+Analytic Function 2 (k_s):
+  Name: k_s
+  Arguments: T
+  Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
+  Units: W/(m*K)
 
-3. Name: k_eff
-   Arguments: T
-   Expression: {gas_conductivity} * ({calculated_bed_void_fraction:.6f} + (1 - {calculated_bed_void_fraction:.6f}) / (0.8 * ({gas_conductivity} / ks_eff(T)) + 0.95)) + 4 * 0.95 * {emissivity_val} * 5.67e-8 * {mean_particle_diameter} * T^3
-   Units: W/(m*K)
+[Porous Medium -> Porosity Input]
+epsilon_p (or phi) = {calculated_bed_void_fraction:.4f}
 
-[GLOBAL DEFINITIONS -> PARAMETERS]
-rho_bed = {rho_bed_effective:.2f} [kg/m^3]
+--------------------------------------------------------------------
+OPTION 2: FOR STANDARD SINGLE-PHASE DOMAIN (HOMOGENIZED BED)
+--------------------------------------------------------------------
+[Global Parameters]
+rho_bed = {rho_bed:.2f} [kg/m^3]
 phi_bed = {calculated_bed_void_fraction:.4f}
-mean_dp = {mean_particle_diameter} [m]
-k_gas   = {gas_conductivity} [W/(m*K)]
 
-[SUMMARY OF COMPUTED PROPERTIES AT T = {temperature_k:.1f} K]
-- Cp_eff  : {cp_eff:.2f} J/(kg*K)
-- ks_eff  : {ks_eff:.3f} W/(m*K)
-- k_eff   : {k_bed_effective:.3f} W/(m*K)
-- rho_bed : {rho_bed_effective:.2f} kg/m^3
-- phi     : {calculated_bed_void_fraction:.4f}
+Analytic Function (k_eff):
+  Name: k_eff
+  Arguments: T
+  Expression: {gas_conductivity} * ({calculated_bed_void_fraction:.6f} + (1 - {calculated_bed_void_fraction:.6f}) / (0.8 * ({gas_conductivity} / k_s(T)) + 0.95)) + 4 * 0.95 * {emissivity_val} * 5.67e-8 * {mean_particle_diameter} * T^3
+  Units: W/(m*K)
+
+====================================================================
+EVALUATED VALUES AT T = {temperature_k:.1f} K:
+- Solid Density (rho_s)       : {rho_s:.2f} kg/m^3
+- Solid Conductivity (k_s)     : {ks_s:.3f} W/(m*K)
+- Solid Heat Capacity (Cp_s)   : {cp_s:.2f} J/(kg*K)
+- Bed Bulk Density (rho_bed)   : {rho_bed:.2f} kg/m^3
+- Bed Effective k (k_eff)      : {k_bed:.3f} W/(m·K)
+- Calculated Porosity (phi)    : {calculated_bed_void_fraction:.4f}
 ====================================================================
 """
 
@@ -355,4 +369,4 @@ with col_c1:
 with col_c2:
     st.markdown("**Mass Distribution (kg)**")
     st.bar_chart({mat.capitalize(): [m] for mat, m in masses.items()})
-        
+    
