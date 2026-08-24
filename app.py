@@ -173,17 +173,17 @@ st.subheader(f"📊 Homogenized Parameters for: {bf_zone}")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric(label=rf"Effective Specific Heat ($C_p$) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
-    st.metric(label=r"Effective Bulk Density ($\rho_{\text{bed}}$)", value=f"{rho_bed_effective:.2f} kg/m³")
+    st.metric(label=f"Effective Specific Heat (Cp) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
+    st.metric(label=f"Effective Bulk Density (ρ_bed)", value=f"{rho_bed_effective:.2f} kg/m³")
     if "Deadman" in bf_zone:
         st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
     else:
-        st.metric(label=r"Solid Skeleton Density ($\rho_{\text{solid}}$)", value=f"{rho_solid_avg:.2f} kg/m³")
+        st.metric(label=f"Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
-    st.metric(label=rf"Packed Bed Effective Conductivity ($k_{{\text{{eff}}}}$) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
-    st.metric(label=rf"Equivalent Solid Conductivity ($k_s$) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
-    st.metric(label=r"Bed Void Fraction ($\phi$)", value=f"{bed_void_fraction:.2f}")
+    st.metric(label=f"Packed Bed Effective Conductivity (k_eff) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
+    st.metric(label=f"Equivalent Solid Conductivity (ks) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
+    st.metric(label=f"Bed Void Fraction (ϕ)", value=f"{bed_void_fraction:.2f}")
 
 # --- Analytical Formulas Display ---
 st.markdown("---")
@@ -192,20 +192,20 @@ st.subheader("📐 Analytical Equations for COMSOL / Numerical Implementation")
 cp_A, cp_B, cp_C = formula_coeffs['cp']
 ks_A, ks_B, ks_C = formula_coeffs['ks']
 
-st.markdown(rf"""
-Based on your region selection ({bf_zone}), the active thermophysical functions are:
+st.markdown(f"""
+Based on your region selection (**{bf_zone}**), the active thermophysical functions are:
 
-1. **Effective Specific Heat Capacity $C_{{p,\text{{eff}}}}(T)$**:
-   $$C_{{p,\text{{eff}}}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \\;\\; \text{{[J/(kg·K)]}}$$
+1. **Effective Specific Heat Capacity $C_{{p,eff}}(T)$**:
+   $$C_{{p,eff}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \\;\\; \text{{[J/(kg·K)]}}$$
 
-2. **Equivalent Solid/Skeleton Thermal Conductivity $k_{{s,\text{{eff}}}}(T)$**:
-   $$k_{{s,\text{{eff}}}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \\;\\; \text{{[W/(m·K)]}}$$
+2. **Equivalent Solid/Skeleton Thermal Conductivity $k_{{s,eff}}(T)$**:
+   $$k_{{s,eff}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \\;\\; \text{{[W/(m·K)]}}$$
 
-3. **Effective Bulk Density $\rho_{\text{{bed}}$**:
-   $$\rho_{\text{{bed}}} = {rho_bed_effective:.2f} \\;\\; \text{{[kg/m³]}}$$
+3. **Effective Bulk Density $\\rho_{{bed}}$**:
+   $$\\rho_{{bed}} = {rho_bed_effective:.2f} \\;\\; \text{{[kg/m³]}}$$
 
-4. **Packed Bed Effective Thermal Conductivity $k_{\text{{eff}}}(T)$**:
-   $$k_{\text{{eff}}}(T) = k_g \cdot \left(\phi + \frac{{1 - \phi}}{{0.8 \cdot \frac{{k_g}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot \epsilon \cdot \sigma \cdot d_p \cdot T^3$$
+4. **Packed Bed Effective Thermal Conductivity $k_{{eff}}(T)$**:
+   $$k_{{eff}}(T) = k_g \cdot \left(\phi + \frac{{1 - \phi}}{{0.8 \cdot \frac{{k_g}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot \epsilon \cdot \sigma \cdot d_p \cdot T^3$$
 """)
 
 # Visual Breakdown Chart
@@ -213,4 +213,3 @@ st.markdown("---")
 st.subheader("📋 Zone Composition Breakdown")
 chart_data = {mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()}
 st.bar_chart(chart_data)
-    
