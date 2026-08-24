@@ -98,7 +98,6 @@ with st.sidebar.expander("Advanced Packed-Bed Settings"):
 
 # --- Calculation Engine ---
 def calculate_single_phase_burden(mass_fractions, T, kg, dp, phi, materials):
-    # 1. Effective Specific Heat (Mass-weighted) & Aggregate Polynomial Coeffs
     cp_eff = 0.0
     cp_A_eff, cp_B_eff, cp_C_eff = 0.0, 0.0, 0.0
     for mat, w in mass_fractions.items():
@@ -108,7 +107,6 @@ def calculate_single_phase_burden(mass_fractions, T, kg, dp, phi, materials):
         cp_C_eff += w * C
         cp_eff += w * (A + B * T + C * (T ** -2))
     
-    # 2. Volume fractions for solid conductivity blending
     volumes = {mat: w / materials[mat]['true_density'] for mat, w in mass_fractions.items()}
     total_vol = sum(volumes.values())
     vol_fractions = {mat: v / total_vol for mat, v in volumes.items()}
@@ -122,11 +120,9 @@ def calculate_single_phase_burden(mass_fractions, T, kg, dp, phi, materials):
         ks_C_eff += x_v * C
         ks_eff += x_v * (A + B * T + C * (T ** 2))
     
-    # 3. Densities and Porosity
     rho_solid_avg = sum(vol_fractions[mat] * materials[mat]['true_density'] for mat in mass_fractions)
     rho_bed_effective = (1.0 - phi) * rho_solid_avg
     
-    # 4. Yagi-Kunii Packed-Bed Effective Thermal Conductivity
     sigma = 5.67e-8
     emissivity = 0.88
     alpha_yk, gamma_yk, beta_yk = 0.8, 0.95, 0.95
@@ -153,14 +149,14 @@ st.subheader("📊 Homogenized Single-Phase Output Parameters")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric(label=f"Effective Specific Heat ($C_p$) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
-    st.metric(label="Packed Bed Bulk Density ($\rho_{\text{bed}}$)", value=f"{rho_bed_effective:.2f} kg/m³")
-    st.metric(label="Solid Skeleton Density ($\rho_{\text{solid}}$)", value=f"{rho_solid_avg:.2f} kg/m³")
+    st.metric(label=rf"Effective Specific Heat ($C_p$) at {temperature_k} K", value=f"{cp_eff:.2f} J/(kg·K)")
+    st.metric(label=r"Packed Bed Bulk Density ($\rho_{\text{bed}}$)", value=f"{rho_bed_effective:.2f} kg/m³")
+    st.metric(label=r"Solid Skeleton Density ($\rho_{\text{solid}}$)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
-    st.metric(label=f"Packed Bed Effective Conductivity ($k_{\text{eff}}$) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
-    st.metric(label=f"Equivalent Solid Conductivity ($k_s$) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
-    st.metric(label="Bed Void Fraction ($\phi$)", value=f"{bed_void_fraction:.2f}")
+    st.metric(label=rf"Packed Bed Effective Conductivity ($k_{{\text{{eff}}}}$) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
+    st.metric(label=rf"Equivalent Solid Conductivity ($k_s$) at {temperature_k} K", value=f"{ks_eff:.3f} W/(m·K)")
+    st.metric(label=r"Bed Void Fraction ($\phi$)", value=f"{bed_void_fraction:.2f}")
 
 # --- Analytical Formulas Display ---
 st.markdown("---")
@@ -169,7 +165,7 @@ st.subheader("📐 Final Analytical Formulas (as a Function of Temperature $T$)"
 cp_A, cp_B, cp_C = formula_coeffs['cp']
 ks_A, ks_B, ks_C = formula_coeffs['ks']
 
-# NOTE: Using a raw f-string (rf"""...""") fixes the escape sequence / syntax error with LaTeX backslashes (\rho, \text)
+# NOTE: Using raw f-strings (rf"""...""") prevents Python escape sequence issues with backslashes (\rho, \text, etc.)
 st.markdown(rf"""
 Based on your current burden mass fractions and coefficient overrides, the effective properties are governed by the following temperature-dependent expressions ($T$ in Kelvin):
 
@@ -191,3 +187,4 @@ st.markdown("---")
 st.subheader("📋 Input Burden Structure Summary")
 chart_data = {mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()}
 st.bar_chart(chart_data)
+        
