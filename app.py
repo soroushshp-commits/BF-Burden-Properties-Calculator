@@ -7,11 +7,11 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Dual Physics Coupling)")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Corrected Scaling)")
 st.markdown("""
-**Model Architecture:** 
-* **Physics 1 (LTNE):** Standard porous media solid sub-node.
-* **Physics 2 (Heat Transfer in Solids - Manual Coupling):** Solid matrix bed properties ($k_{s,eff}$ and $\rho_{s,eff}$) calculated strictly from the solid phase and solid fraction $(1-\phi)$, with **zero gas properties** included.
+**Model Architecture Corrections:** 
+* **Effective Heat Capacity:** $C_{p,eff} = C_{p,s} \cdot (1 - \phi)$ ( strictly multiplied by the $(1-\phi)$ factor, no density cross-multiplication).
+* **Effective Conductivity:** $k_{eff} = k_s \cdot (1 - \phi)$ for the manual solid matrix.
 * **Custom Polynomials:** Full control over $C_p$ and $k$ coefficients ($A, B, C$) for every material.
 """)
 
@@ -139,11 +139,9 @@ def calculate_physics(T):
         ks_s += x * (A + B * T + C * (T ** 2))
         rho_s += x * materials[m]['true_density']
 
-    # 1. LTNE Solid Properties (Intrinsic solid matrix, COMSOL handles porosity internally)
-    # 2. Solid Heat Transfer Domain (Manual Coupling Solid Matrix): Strictly solid bed properties (no gas properties)
-    rho_s_bed = rho_s * (1.0 - phi)
-    cp_s_bed = cp_s  # Specific heat capacity remains intensive per unit mass of solid
-    ks_s_bed = ks_s * (1.0 - phi)  # Solid skeleton effective conductivity scaled by solid volume fraction (1-phi)
+    # Effective properties: strictly scaled by (1 - phi)
+    cp_s_eff = cp_s * (1.0 - phi)
+    ks_s_eff = ks_s * (1.0 - phi)
 
     # Interphase Heat Transfer (Wakao and Kaguei)
     Re = (rho_g * vg * mean_particle_diameter) / mu_g if mu_g > 0 else 0
@@ -155,9 +153,9 @@ def calculate_physics(T):
     q_sf_coeff = h_sf * a_sf
 
     coeffs = {'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C)}
-    return (cp_s, ks_s, rho_s), (rho_s_bed, cp_s_bed, ks_s_bed), (Re, Pr, Nu, h_sf, a_sf, q_sf_coeff), coeffs
+    return (cp_s, ks_s, rho_s), (cp_s_eff, ks_s_eff), (Re, Pr, Nu, h_sf, a_sf, q_sf_coeff), coeffs
 
-(cp_s, ks_s, rho_s), (rho_s_bed, cp_s_bed, ks_s_bed), interphase, coeffs = calculate_physics(temperature_k)
+(cp_s, ks_s, rho_s), (cp_s_eff, ks_s_eff), interphase, coeffs = calculate_physics(temperature_k)
 Re, Pr, Nu, h_sf, a_sf, q_sf_coeff = interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
@@ -168,12 +166,12 @@ st.subheader(f"📊 Computed Properties at $T = {temperature_k:.1f}$ K (Void Fra
 
 tab1, tab2, tab3 = st.tabs([
     "🟢 COMSOL LTNE: Solid Sub-Node", 
-    "🟠 COMSOL Heat Transfer in Solids (Manual Solid Matrix)",
+    "🟠 COMSOL Heat Transfer in Solids (Manual Matrix)",
     "⚙️ Gas Dynamics & Interphase Coupling ($q_{sf}$)"
 ])
 
 with tab1:
-    st.info("💡 **LTNE Solid Matrix.** Uses pure intrinsic solid properties; COMSOL handles porosity scaling internally.")
+    st.info("💡 **LTNE Solid Matrix.** Uses pure intrinsic solid properties.")
     col1, col2, col3 = st.columns(3)
     col1.metric("Intrinsic Solid Density (ρ_s)", f"{rho_s:.2f} kg/m³")
     col2.metric("Intrinsic Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
@@ -184,15 +182,15 @@ with tab1:
     st.latex(rf"k_s(T) = {ks_A:.4f} + ({ks_B:.4e})T + ({ks_C:.4e})T^2")
 
 with tab2:
-    st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Solid bed properties scaled by $(1 - \phi)$ with **zero gas/fluid properties** included.")
+    st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Properties scaled strictly by $(1 - \phi)$ with no gas properties.")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Effective Solid Bed Density (ρ_s,bed)", f"{rho_s_bed:.2f} kg/m³")
-    col2.metric("Effective Solid Bed Conductivity (k_s,bed)", f"{ks_s_bed:.3f} W/(m·K)")
-    col3.metric("Solid Heat Capacity (Cp_s)", f"{cp_s_bed:.2f} J/(kg·K)")
+    col1.metric("Intrinsic Solid Density (ρ_s)", f"{rho_s:.2f} kg/m³")
+    col2.metric("Effective Conductivity (k_eff = k_s · [1-φ])", f"{ks_s_eff:.3f} W/(m·K)")
+    col3.metric("Effective Heat Capacity (Cp_eff = Cp_s · [1-φ])", f"{cp_s_eff:.2f} J/(kg·K)")
     
     st.markdown("#### Analytical Functions ($T$)")
-    st.latex(rf"\rho_{{s,bed}} \cdot C_{{p,s}}(T) = (1 - {phi:.4f}) \cdot {rho_s:.2f} \cdot C_{{p,s}}(T)")
-    st.latex(rf"k_{{s,bed}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
+    st.latex(rf"C_{{p,eff}}(T) = (1 - {phi:.4f}) \cdot C_{{p,s}}(T)")
+    st.latex(rf"k_{{eff}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
 
 with tab3:
     col1, col2, col3 = st.columns(3)
@@ -227,10 +225,12 @@ Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
 --------------------------------------------------------------------
 2. HEAT TRANSFER IN SOLIDS (MANUAL COUPLING SOLID MATRIX)
 --------------------------------------------------------------------
-[Constants / Domain Parameters]
-rho_s_bed = {rho_s_bed:.6f} [kg/m^3]  // (1 - phi) * rho_s
+rho_s = {rho_s:.2f} [kg/m^3]
 
-[Analytic Function: Solid Bed Conductivity k_s_bed(T)]
+[Analytic Function: Effective Heat Capacity Cp_eff(T)]
+Expression: (1 - {phi:.4f}) * ( {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2) )
+
+[Analytic Function: Effective Conductivity k_eff(T)]
 Expression: (1 - {phi:.4f}) * ( {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2 )
 
 --------------------------------------------------------------------
@@ -244,8 +244,8 @@ Function q_sf(T_fluid, T_solid) = {q_sf_coeff:.6f} * (T_fluid - T_solid) [W/m^3]
 """
 
 st.download_button(
-    label="📥 Download Dual-Physics COMSOL Variables (.txt)",
+    label="📥 Download Corrected COMSOL Variables (.txt)",
     data=comsol_text,
-    file_name=f"COMSOL_BF_DualPhysics_Properties.txt",
+    file_name=f"COMSOL_BF_Corrected_Properties.txt",
     mime="text/plain"
 )
