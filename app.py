@@ -7,12 +7,12 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Advanced Gas & Particle Dynamics)")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Full Temperature-Dependent Gas & Solid Dynamics)")
 st.markdown("""
 **Model Architecture Updates:** 
-* **Effective Sauter Diameter ($d_{p,eff}$):** Automatically computed using the harmonic mean of individual material particle sizes weighted by their solid volume fractions.
-* **Temperature-Dependent Gas Properties:** $\mu_g, C_{p,g}, \text{ and } k_g$ are calculated dynamically using user-defined polynomial coefficients ($A + B\cdot T + C\cdot T^2 + D\cdot T^3$).
-* **Dual Physics Solid Scaling:** LTNE true density / solid properties and Manual Matrix bulk density / effective properties scaled strictly by $(1 - \phi)$.
+* **Temperature-Dependent Gas Density & Properties:** $\rho_g, \mu_g, C_{p,g}, \text{ and } k_g$ are modeled as full polynomial functions of temperature ($A + B\cdot T + C\cdot T^2 + D\cdot T^3$).
+* **Temperature-Dependent Interphase Coupling:** $Re(T), Pr(T), Nu(T), \text{ and } h_{sf}(T)$ are calculated dynamically as functions of $T$.
+* **Effective Sauter Diameter ($d_{p,eff}$):** Computed via volume-fraction-weighted harmonic mean of solid particles.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -84,7 +84,7 @@ for mat in active_mats:
         col_cpa, col_cpb, col_cpc = st.columns(3)
         cpa = col_cpa.number_input("A", value=float(default_materials[mat]['cpa']), key=f"{mat}_cpa")
         cpb = col_cpb.number_input("B", value=float(default_materials[mat]['cpb']), key=f"{mat}_cpb")
-        cpc = col_cpc.number_input("C", value=float(default_materials[mat]['cpc']), key=f"{mat}_cpc")
+        cpc = col_cpb.number_input("C", value=float(default_materials[mat]['cpc']), key=f"{mat}_cpc")
         
         st.markdown(f"**$k$ Coefficients** ($A + B\\cdot T + C\\cdot T^2$)")
         col_ka, col_kb, col_kc = st.columns(3)
@@ -104,7 +104,12 @@ for mat in ['sinter', 'pellet', 'lump']:
 st.sidebar.header("💨 Gas Flow Properties & Polynomials")
 temperature_k = paired_input("Bed Temp (K)", 273.15, 2000.0, 1600.0 if "Deadman" in bf_zone else 1000.0, 10.0, "temp_k", fmt="%.1f")
 vg = paired_input("Superficial Gas Velocity (m/s)", 0.1, 5.0, 1.5, 0.1, "vg_val")
-rho_g = paired_input("Gas Density ρ_g (kg/m³)", 0.1, 2.0, 0.45, 0.05, "rho_g_val")
+
+with st.sidebar.expander("Gas Density ρ_g ($A + BT + CT^2 + DT^3$)", expanded=True):
+    rhog_A = st.number_input("ρ_g A", value=0.95, format="%.3f", key="rhog_a")
+    rhog_B = st.number_input("ρ_g B", value=-7.50e-4, format="%.2e", key="rhog_b")
+    rhog_C = st.number_input("ρ_g C", value=2.50e-7, format="%.2e", key="rhog_c")
+    rhog_D = st.number_input("ρ_g D", value=0.0, format="%.2e", key="rhog_d")
 
 with st.sidebar.expander("Gas Dynamic Viscosity μ_g ($A + BT + CT^2 + DT^3$)", expanded=False):
     mu_A = st.number_input("μ A", value=1.00e-5, format="%.2e", key="mu_a")
@@ -120,7 +125,7 @@ with st.sidebar.expander("Gas Specific Heat C_p,g ($A + BT + CT^2 + DT^3$)", exp
 
 with st.sidebar.expander("Gas Thermal Conductivity k_g ($A + BT + CT^2 + DT^3$)", expanded=False):
     kg_A = st.number_input("kg A", value=0.010, format="%.3f", key="kg_a")
-    kg_B = st.number_input("kg_B", value=5.00e-5, format="%.2e", key="kg_b")
+    kg_B = st.number_input("kg B", value=5.00e-5, format="%.2e", key="kg_b")
     kg_C = st.number_input("kg C", value=0.0, format="%.2e", key="kg_c")
     kg_D = st.number_input("kg D", value=0.0, format="%.2e", key="kg_d")
 
@@ -166,6 +171,7 @@ def calculate_physics(T):
     dp_eff = (1.0 / inv_dp_sum) if inv_dp_sum > 0 else 0.025
 
     # Temperature-Dependent Gas Properties via Polynomial Evaluation
+    rho_g = rhog_A + rhog_B * T + rhog_C * (T ** 2) + rhog_D * (T ** 3)
     mu_g = mu_A + mu_B * T + mu_C * (T ** 2) + mu_D * (T ** 3)
     cp_g = cpg_A + cpg_B * T + cpg_C * (T ** 2) + cpg_D * (T ** 3)
     gas_conductivity = kg_A + kg_B * T + kg_C * (T ** 2) + kg_D * (T ** 3)
@@ -179,26 +185,31 @@ def calculate_physics(T):
     a_sf = (6.0 * (1.0 - phi)) / dp_eff if dp_eff > 0 else 0
     q_sf_coeff = h_sf * a_sf
 
-    gas_state = {'mu': mu_g, 'cp': cp_g, 'k': gas_conductivity}
-    coeffs = {'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C), 'mu': (mu_A, mu_B, mu_C, mu_D), 'cpg': (cpg_A, cpg_B, cpg_C, cpg_D), 'kg': (kg_A, kg_B, kg_C, kg_D)}
+    gas_state = {'rho': rho_g, 'mu': mu_g, 'cp': cp_g, 'k': gas_conductivity}
+    coeffs = {
+        'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C), 
+        'rhog': (rhog_A, rhog_B, rhog_C, rhog_D),
+        'mu': (mu_A, mu_B, mu_C, mu_D), 'cpg': (cpg_A, cpg_B, cpg_C, cpg_D), 'kg': (kg_A, kg_B, kg_C, kg_D)
+    }
     return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, gas_state), coeffs
 
 (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), gas_interphase, coeffs = calculate_physics(temperature_k)
 dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, gas_state = gas_interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
+rhog_A, rhog_B, rhog_C, rhog_D = coeffs['rhog']
 mu_A, mu_B, mu_C, mu_D = coeffs['mu']
 cpg_A, cpg_B, cpg_C, cpg_D = coeffs['cpg']
 kg_A, kg_B, kg_C, kg_D = coeffs['kg']
 
 # --- Display Results ---
 st.markdown("---")
-st.subheader(f"📊 Computed Properties at $T = {temperature_k:.1f}$ K (Void Fraction $\\phi = {phi:.4f}$ | Effective $d_p = {dp_eff:.4f}$ m)")
+st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K (Void Fraction phi = {phi:.4f} | Effective d_p = {dp_eff:.4f} m)")
 
 tab1, tab2, tab3 = st.tabs([
     "🟢 COMSOL LTNE: Solid Sub-Node", 
     "🟠 COMSOL Heat Transfer in Solids (Manual Matrix)",
-    "⚙️ Gas Dynamics & Interphase Coupling ($q_{sf}$)"
+    "⚙️ Temperature-Dependent Gas Dynamics & Coupling (q_sf)"
 ])
 
 with tab1:
@@ -208,73 +219,61 @@ with tab1:
     col2.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
     col3.metric("Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
     
-    st.markdown("#### Analytical Functions ($T$)")
+    st.markdown("#### Analytical Functions (T)")
     st.latex(rf"C_{{p,s}}(T) = {cp_A:.4f} + ({cp_B:.4e})T + ({cp_C:.4e})T^{{-2}}")
     st.latex(rf"k_s(T) = {ks_A:.4f} + ({ks_B:.4e})T + ({ks_C:.4e})T^2")
 
 with tab2:
-    st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Uses Bulk Density and properties scaled strictly by $(1 - \phi)$.")
+    st.info("💡 **Manual Solid Matrix (Heat Transfer in Solids).** Uses Bulk Density and properties scaled strictly by (1 - phi).")
     col1, col2, col3 = st.columns(3)
     col1.metric("Bulk Density (ρ_bulk)", f"{rho_bulk:.2f} kg/m³")
     col2.metric("Effective Conductivity (k_eff = k_s · [1-φ])", f"{ks_s_eff:.3f} W/(m·K)")
     col3.metric("Effective Heat Capacity (Cp_eff = Cp_s · [1-φ])", f"{cp_s_eff:.2f} J/(kg·K)")
     
-    st.markdown("#### Analytical Functions ($T$)")
+    st.markdown("#### Analytical Functions (T)")
     st.latex(rf"C_{{p,eff}}(T) = (1 - {phi:.4f}) \cdot C_{{p,s}}(T)")
     st.latex(rf"k_{{eff}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
 
 with tab3:
-    st.info(f"💡 **Gas Dynamics evaluated at T = {temperature_k:.1f} K.** Effective Sauter diameter d_p,eff = {dp_eff:.4f} m.")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Reynolds Number (Re)", f"{Re:.1f}")
-    col2.metric("Prandtl Number (Pr)", f"{Pr:.3f}")
-    col3.metric("Nusselt Number (Nu)", f"{Nu:.2f}")
-    col4.metric("Effective Particle Diameter (d_p,eff)", f"{dp_eff:.4f} m")
+    st.info(f"💡 **Gas Dynamics & Coupling evaluated as functions of T** (Evaluated at T = {temperature_k:.1f} K).")
     
-    st.markdown("#### Evaluated Gas Properties & Interphase Coupling ($q_{sf}$)")
-    gcol1, gcol2, gcol3 = st.columns(3)
-    gcol1.metric("Gas Viscosity (μ_g)", f"{gas_state['mu']:.2e} Pa·s")
-    gcol2.metric("Gas Specific Heat (Cp_g)", f"{gas_state['cp']:.2f} J/(kg·K)")
-    gcol3.metric("Gas Conductivity (k_g)", f"{gas_state['k']:.4f} W/(m·K)")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Reynolds Number Re(T)", f"{Re:.1f}")
+    col2.metric("Prandtl Number Pr(T)", f"{Pr:.3f}")
+    col3.metric("Nusselt Number Nu(T)", f"{Nu:.2f}")
+    col4.metric("Effective Particle Diameter d_p,eff", f"{dp_eff:.4f} m")
+    
+    st.markdown("#### Gas Properties as Functions of Temperature ($T$)")
+    gcol1, gcol2, gcol3, gcol4 = st.columns(4)
+    gcol1.metric("Gas Density ρ_g(T)", f"{gas_state['rho']:.3f} kg/m³")
+    gcol2.metric("Viscosity μ_g(T)", f"{gas_state['mu']:.2e} Pa·s")
+    gcol3.metric("Specific Heat Cp_g(T)", f"{gas_state['cp']:.2f} J/(kg·K)")
+    gcol4.metric("Conductivity k_g(T)", f"{gas_state['k']:.4f} W/(m·K)")
 
-    col4, col5 = st.columns(2)
-    col4.metric("Specific Surface Area (a_sf)", f"{a_sf:.1f} m²/m³")
-    col5.metric("Interphase HTC (h_sf)", f"{h_sf:.2f} W/(m²·K)")
-    st.latex(rf"q_{{sf}}(T_{{fluid}}, T_{{solid}}) = {a_sf:.2f} \cdot {h_sf:.2f} \cdot (T_{{fluid}} - T_{{solid}}) \text{{  [W/m³]}}")
+    st.markdown("#### Interphase Heat Transfer Coefficient & Coupling Terms as Functions of ($T$)")
+    col5, col6 = st.columns(2)
+    col5.metric("Specific Surface Area a_sf", f"{a_sf:.1f} m²/m³")
+    col6.metric("Interphase HTC h_sf(T)", f"{h_sf:.2f} W/(m²·K)")
+    
+    st.markdown("#### Analytical Temperature-Dependent Formulation")
+    st.latex(r"Re(T) = \frac{\rho_g(T) \cdot v_g \cdot d_{p,eff}}{\mu_g(T)}")
+    st.latex(r"Pr(T) = \frac{C_{p,g}(T) \cdot \mu_g(T)}{k_g(T)}")
+    st.latex(r"Nu(T) = 2.0 + 1.1 \cdot [Pr(T)]^{1/3} \cdot [Re(T)]^{0.6}")
+    st.latex(rf"h_{{sf}}(T) = \frac{{Nu(T) \cdot k_g(T)}}{{d_{{p,eff}}}} = {h_sf:.2f} \text{{ [W/(m²·K)] at selected T}}")
+    st.latex(rf"q_{{sf}}(T_{{fluid}}, T_{{solid}}, T) = {a_sf:.2f} \cdot h_{{sf}}(T) \cdot (T_{{fluid}} - T_{{solid}}) \text{{ [W/m³]}}")
 
 # --- COMSOL Text Export Content Generator ---
 comsol_text = f"""====================================================================
-BLAST FURNACE DUAL PHYSICS & GAS DYNAMICS MODEL EXPORT (COMSOL)
-Evaluated at Temp: {temperature_k:.2f} K | Bed Porosity (phi): {phi:.4f}
-Effective Particle Diameter (d_p,eff): {dp_eff:.6f} m
+BLAST FURNACE FULL TEMPERATURE-DEPENDENT MODEL EXPORT (COMSOL)
+Evaluated at Reference Temp: {temperature_k:.2f} K | Bed Porosity (phi): {phi:.4f}
 ====================================================================
 
 --------------------------------------------------------------------
-1. HEAT TRANSFER IN POROUS MEDIA (LTNE) - SOLID SUB-NODE
+1. TEMPERATURE-DEPENDENT GAS PROPERTIES (FLUID DOMAIN)
 --------------------------------------------------------------------
-rho_s = {rho_s:.2f} [kg/m^3]  // True density
-porosity_phi = {phi:.4f}
+[Analytic Function: Gas Density rho_g(T)]
+Expression: {rhog_A:.6f} + ({rhog_B:.6e})*T + ({rhog_C:.6e})*T^2 + ({rhog_D:.6e})*T^3
 
-[Analytic Function: Solid Heat Capacity Cp_s(T)]
-Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
-
-[Analytic Function: Solid Conductivity k_s(T)]
-Expression: {ks_A:.6f} + ({ks_B:.6f})*T + ({ks_C:.6e})*T^2
-
---------------------------------------------------------------------
-2. HEAT TRANSFER IN SOLIDS (MANUAL COUPLING SOLID MATRIX)
---------------------------------------------------------------------
-rho_bulk = {rho_bulk:.2f} [kg/m^3]  // Bulk density
-
-[Analytic Function: Effective Heat Capacity Cp_eff(T)]
-Expression: (1 - {phi:.4f}) * ( {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2) )
-
-[Analytic Function: Effective Conductivity k_eff(T)]
-Expression: (1 - {phi:.4f}) * ( {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2 )
-
---------------------------------------------------------------------
-3. TEMPERATURE-DEPENDENT GAS PROPERTIES (FLUID DOMAIN)
---------------------------------------------------------------------
 [Analytic Function: Gas Viscosity mu_g(T)]
 Expression: {mu_A:.6e} + ({mu_B:.6e})*T + ({mu_C:.6e})*T^2 + ({mu_D:.6e})*T^3
 
@@ -285,19 +284,47 @@ Expression: {cpg_A:.6f} + ({cpg_B:.6e})*T + ({cpg_C:.6e})*T^2 + ({cpg_D:.6e})*T^
 Expression: {kg_A:.6f} + ({kg_B:.6e})*T + ({kg_C:.6e})*T^2 + ({kg_D:.6e})*T^3
 
 --------------------------------------------------------------------
-4. INTERPHASE HEAT TRANSFER COUPLING (FLUID-SOLID)
+2. HEAT TRANSFER IN POROUS MEDIA (LTNE) - SOLID SUB-NODE
+--------------------------------------------------------------------
+rho_s = {rho_s:.2f} [kg/m^3]  // True density
+porosity_phi = {phi:.4f}
+
+[Analytic Function: Solid Heat Capacity Cp_s(T)]
+Expression: {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2)
+
+[Analytic Function: Solid Conductivity k_s(T)]
+Expression: {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2
+
+--------------------------------------------------------------------
+3. HEAT TRANSFER IN SOLIDS (MANUAL COUPLING SOLID MATRIX)
+--------------------------------------------------------------------
+rho_bulk = {rho_bulk:.2f} [kg/m^3]  // Bulk density
+
+[Analytic Function: Effective Heat Capacity Cp_eff(T)]
+Expression: (1 - {phi:.4f}) * ( {cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2) )
+
+[Analytic Function: Effective Conductivity k_eff(T)]
+Expression: (1 - {phi:.4f}) * ( {ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2 )
+
+--------------------------------------------------------------------
+4. INTERPHASE HEAT TRANSFER COUPLING (FLUID-SOLID) AS FUNCTIONS OF T
 --------------------------------------------------------------------
 dp_eff = {dp_eff:.6f} [m]
 a_sf = {a_sf:.6f} [m^2/m^3]
-h_sf = {h_sf:.6f} [W/(m^2*K)]
-Function q_sf(T_fluid, T_solid) = {q_sf_coeff:.6f} * (T_fluid - T_solid) [W/m^3]
+
+// Wakao-Kaguei Correlations as Functions of Temperature T:
+// Re(T) = (rho_g(T) * vg * dp_eff) / mu_g(T)
+// Pr(T) = (cp_g(T) * mu_g(T)) / kg(T)
+// Nu(T) = 2.0 + 1.1 * (Pr(T))^(1/3) * (Re(T))^0.6
+// h_sf(T) = (Nu(T) * kg(T)) / dp_eff
+// q_sf(T_fluid, T_solid, T) = a_sf * h_sf(T) * (T_fluid - T_solid)
 
 ====================================================================
 """
 
 st.download_button(
-    label="📥 Download Advanced COMSOL Variables (.txt)",
+    label="📥 Download Full Temperature-Dependent COMSOL Variables (.txt)",
     data=comsol_text,
-    file_name=f"COMSOL_BF_Advanced_Properties.txt",
+    file_name=f"COMSOL_BF_Full_Temperature_Functions.txt",
     mime="text/plain"
 )
