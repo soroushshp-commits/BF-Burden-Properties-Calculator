@@ -181,8 +181,8 @@ Based on your current burden mass fractions and coefficient overrides, the effec
 3. **Effective Packed Bed Bulk Density $\rho_{{\text{{bed}}}}$** (Constant with respect to $T$):
    $$\rho_{{\text{{bed}}}} = {rho_bed_effective:.2f} \\;\\; \\text{{[kg/m³]}}$$
 
-4. **Packed Bed Effective Thermal Conductivity $k_{{\text{{eff}}}}(T)$** (Yagi-Kunii formulation):
-   $$k_{{\text{{eff}}}}(T) = {gas_conductivity} \cdot \left({bed_void_fraction} + \frac{{1 - {bed_void_fraction}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_s(ks_A, ks_B, ks_C, temperature_k)}}} + 0.95}}\right) + (4 \cdot 0.95 \cdot 0.88 \cdot 5.67\times 10^{{-8}} \cdot {mean_particle_diameter}) \cdot T^3$$
+4. **Packed Bed Effective Thermal Conductivity $k_{{\text{{eff}}}}(T)$** (Yagi-Kunii formulation evaluated with current $ks$):
+   $$k_{{\text{{eff}}}}(T) = {gas_conductivity} \cdot \left({bed_void_fraction} + \frac{{1 - {bed_void_fraction}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_eff:.4f}}} + 0.95}}\right) + (4 \cdot 0.95 \cdot 0.88 \cdot 5.67\times 10^{{-8}} \cdot {mean_particle_diameter}) \cdot T^3$$
 """)
 
 # Visual Breakdown Chart
@@ -190,4 +190,3 @@ st.markdown("---")
 st.subheader("📋 Input Burden Structure Summary")
 chart_data = {mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()}
 st.bar_chart(chart_data)
-        
