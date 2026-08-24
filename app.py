@@ -190,3 +190,4 @@ st.markdown("---")
 st.subheader("📋 Input Burden Structure Summary")
 chart_data = {mat.capitalize(): [w * 100] for mat, w in mass_fractions.items()}
 st.bar_chart(chart_data)
+        
