@@ -20,7 +20,6 @@ def paired_input(label, min_val, max_val, default_val, step, key, container=st.s
     if key not in st.session_state:
         st.session_state[key] = default_val
         
-    # Layout: Label + Compact Number Box in the same row, Slider below
     col_label, col_input = container.columns([3, 1.2])
     with col_label:
         container.markdown(f"**{label}**")
@@ -45,7 +44,6 @@ def paired_input(label, min_val, max_val, default_val, step, key, container=st.s
         label_visibility="collapsed"
     )
     
-    # Sync states
     if s_val != st.session_state[key] and s_val != n_val:
         st.session_state[key] = s_val
     elif n_val != st.session_state[key]:
@@ -210,7 +208,7 @@ with col1:
     if "Deadman" in bf_zone:
         st.metric(label="Liquid Melt Holdup in Pores", value=f"{liquid_holdup*100:.1f}%")
     else:
-        st.metric(label="Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
+        st.metric(label=f"Solid Skeleton Density (ρ_solid)", value=f"{rho_solid_avg:.2f} kg/m³")
 
 with col2:
     st.metric(label=f"Packed Bed Effective Conductivity (k_eff) at {temperature_k} K", value=f"{k_bed_effective:.3f} W/(m·K)")
@@ -224,17 +222,17 @@ st.subheader("📐 Analytical Equations for COMSOL / Numerical Implementation")
 cp_A, cp_B, cp_C = formula_coeffs['cp']
 ks_A, ks_B, ks_C = formula_coeffs['ks']
 
-st.markdown(f"""
+st.markdown(rf"""
 Based on your region selection (**{bf_zone}**), the active thermophysical functions are:
 
 1. **Effective Specific Heat Capacity $C_{{p,eff}}(T)$**:
-   $$C_{{p,eff}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \\;\\; \text{{[J/(kg·K)]}}$$
+   $$C_{{p,eff}}(T) = {cp_A:.3f} + ({cp_B:.3e}) \cdot T + ({cp_C:.3e}) \cdot T^{{-2}} \;\;\text{{[J/(kg·K)]}}$$
 
 2. **Equivalent Solid/Skeleton Thermal Conductivity $k_{{s,eff}}(T)$**:
-   $$k_{{s,eff}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \\;\\; \text{{[W/(m·K)]}}$$
+   $$k_{{s,eff}}(T) = {ks_A:.3f} + ({ks_B:.3e}) \cdot T + ({ks_C:.3e}) \cdot T^2 \;\;\text{{[W/(m·K)]}}$$
 
-3. **Effective Bulk Density $\\rho_{{bed}}$**:
-   $$\\rho_{{bed}} = {rho_bed_effective:.2f} \\;\\; \text{{[kg/m³]}}$$
+3. **Effective Bulk Density $\rho_{{bed}}$**:
+   $$\rho_{{bed}} = {rho_bed_effective:.2f} \;\;\text{{[kg/m³]}}$$
 
 4. **Packed Bed Effective Thermal Conductivity $k_{{eff}}(T)$**:
    $$k_{{eff}}(T) = {gas_conductivity} \cdot \left({bed_void_fraction} + \frac{{1 - {bed_void_fraction}}}{{0.8 \cdot \frac{{{gas_conductivity}}}{{{ks_eff:.4f}}} + 0.95}}\right) + 4 \cdot 0.95 \cdot \epsilon \cdot \sigma \cdot {mean_particle_diameter} \cdot T^3$$
