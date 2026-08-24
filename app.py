@@ -10,9 +10,9 @@ st.set_page_config(
 st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator")
 st.markdown("""
 **Updates Applied:** 
-* **True Mixture Effective Properties:** `Cp_bed` and `rho_bed` now correctly account for the combined solid + gas mass weighted by the void fraction. 
+* **Mass Input Only:** Volume selection has been removed; mass is the single driver for the calculations.
+* **Revised Effective Heat Capacity:** `Cp_bed` is now calculated strictly as `(1 - phi) * Cp_s`.
 * **Custom Polynomials:** Full control over $C_p$ and $k$ coefficients ($A, B, C$) for every material.
-* **Explicit T-Dependency:** Temperature-dependent variables (Radiation, Interphase Coupling, and Effective Conductivity) are outputted as analytical functions of $T$ for COMSOL.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -47,21 +47,18 @@ def paired_input(label, min_val, max_val, default_val, step, key, container=st.s
     )
     return st.session_state[val_key]
 
-# --- Sidebar: Zone & Input Method Selection ---
+# --- Sidebar: Zone Selection ---
 st.sidebar.header("🗺️ Blast Furnace Region")
 bf_zone = st.sidebar.radio("Select Operating Zone", ["Granular Zone (Dry Burden Mix)", "Deadman / Lower Coke Zone (Coke + Melts)"])
-
-st.sidebar.header("⚖️ Input Method")
-input_method = st.sidebar.radio("Choose Primary Input", ["Mass-based (kg)", "Volume-based (m³)"])
 
 # --- Sidebar: Material Properties (Densities, Quantities & Coefficients) ---
 st.sidebar.header("🛠️ Material Database & Coefficients")
 
 default_materials = {
-    'coke': {'td': 1850.0, 'bd': 480.0, 'mass': 960.0, 'vol': 2.0, 'cpa': 860.0, 'cpb': 5.40e-1, 'cpc': -2.75e7, 'ka': 0.28, 'kb': 1.75e-3, 'kc': -3.20e-7},
-    'sinter': {'td': 3450.0, 'bd': 1700.0, 'mass': 5950.0, 'vol': 3.5, 'cpa': 745.0, 'cpb': 2.60e-1, 'cpc': -1.25e7, 'ka': 0.92, 'kb': 0.48e-3, 'kc': 0.85e-7},
-    'pellet': {'td': 3350.0, 'bd': 2050.0, 'mass': 6150.0, 'vol': 3.0, 'cpa': 620.5, 'cpb': 6.15e-1, 'cpc': -1.18e7, 'ka': 1.42, 'kb': -0.38e-3, 'kc': 1.15e-7},
-    'lump': {'td': 4600.0, 'bd': 2200.0, 'mass': 3300.0, 'vol': 1.5, 'cpa': 615.0, 'cpb': 5.85e-1, 'cpc': -1.15e7, 'ka': 2.15, 'kb': -0.65e-3, 'kc': 0.25e-7}
+    'coke': {'td': 1850.0, 'bd': 480.0, 'mass': 960.0, 'cpa': 860.0, 'cpb': 5.40e-1, 'cpc': -2.75e7, 'ka': 0.28, 'kb': 1.75e-3, 'kc': -3.20e-7},
+    'sinter': {'td': 3450.0, 'bd': 1700.0, 'mass': 5950.0, 'cpa': 745.0, 'cpb': 2.60e-1, 'cpc': -1.25e7, 'ka': 0.92, 'kb': 0.48e-3, 'kc': 0.85e-7},
+    'pellet': {'td': 3350.0, 'bd': 2050.0, 'mass': 6150.0, 'cpa': 620.5, 'cpb': 6.15e-1, 'cpc': -1.18e7, 'ka': 1.42, 'kb': -0.38e-3, 'kc': 1.15e-7},
+    'lump': {'td': 4600.0, 'bd': 2200.0, 'mass': 3300.0, 'cpa': 615.0, 'cpb': 5.85e-1, 'cpc': -1.15e7, 'ka': 2.15, 'kb': -0.65e-3, 'kc': 0.25e-7}
 }
 
 active_mats = ['coke', 'sinter', 'pellet', 'lump'] if "Granular" in bf_zone else ['coke']
@@ -76,14 +73,9 @@ for mat in active_mats:
         td = st.number_input("True Density (kg/m³)", value=default_materials[mat]['td'], step=50.0, key=f"{mat}_td")
         bd = st.number_input("Bulk Density (kg/m³)", value=default_materials[mat]['bd'], step=50.0, key=f"{mat}_bd")
         
-        if input_method == "Mass-based (kg)":
-            m = st.number_input("Mass (kg)", value=default_materials[mat]['mass'], step=50.0, key=f"{mat}_m")
-            v = m / bd if bd > 0 else 0.0
-            st.caption(f"Calculated Bulk Volume: {v:.3f} m³")
-        else:
-            v = st.number_input("Bulk Volume (m³)", value=default_materials[mat]['vol'], step=0.1, key=f"{mat}_v")
-            m = v * bd
-            st.caption(f"Calculated Mass: {m:.2f} kg")
+        m = st.number_input("Mass (kg)", value=default_materials[mat]['mass'], step=50.0, key=f"{mat}_m")
+        v = m / bd if bd > 0 else 0.0
+        st.caption(f"Calculated Bulk Volume: {v:.3f} m³")
             
         masses[mat] = m
         volumes[mat] = v
@@ -157,11 +149,8 @@ def calculate_physics(T):
     # Density considers BOTH solid mass and gas mass within the void
     rho_bed = (1.0 - phi) * rho_s + phi * rho_g
     
-    # Effective Mixture Heat Capacity (Mass-weighted average of both phases)
-    if rho_bed > 0:
-        cp_bed = ((1.0 - phi) * rho_s * cp_s + phi * rho_g * cp_g) / rho_bed
-    else:
-        cp_bed = 0.0
+    # Effective Mixture Heat Capacity strictly calculated as Cp_s * (1 - phi)
+    cp_bed = cp_s * (1.0 - phi)
     
     emissivity = 0.92 if "Deadman" in bf_zone else 0.88
     sigma = 5.67e-8
@@ -217,14 +206,14 @@ with tab1:
     st.latex(rf"k_s(T) = {ks_A:.4f} + ({ks_B:.4e})T + ({ks_C:.4e})T^2")
 
 with tab2:
-    st.info("💡 **For Single-Phase Heat Transfer.** These represent the TRUE combined mass and thermal behavior of the solid/gas mixture.")
+    st.info("💡 **For Single-Phase Heat Transfer.** Using the user-defined direct scaling for Cp_eff.")
     col1, col2, col3 = st.columns(3)
     col1.metric("Mixture Bed Density (ρ_bed)", f"{rho_bed:.2f} kg/m³")
     col2.metric("Mixture Conductivity (k_eff)", f"{k_bed:.3f} W/(m·K)")
     col3.metric("Mixture Heat Capacity (Cp_bed)", f"{cp_bed:.2f} J/(kg·K)")
     
     st.markdown("#### Analytical Functions of Temperature ($T$)")
-    st.latex(rf"C_{{p,eff}}(T) = \frac{{(1 - {phi:.4f}) \cdot {rho_s:.2f} \cdot C_{{p,s}}(T) + {phi:.4f} \cdot {rho_g:.2f} \cdot {cp_g:.1f}}}{{{rho_bed:.2f}}}")
+    st.latex(rf"C_{{p,eff}}(T) = (1 - {phi:.4f}) \cdot C_{{p,s}}(T)")
     st.latex(rf"k_{{gap}}(T) = {gas_conductivity} + 4 \cdot 0.88 \cdot 5.67 \times 10^{{-8}} \cdot {mean_particle_diameter} \cdot T^3")
     st.latex(rf"k_{{eff}}(T) = \frac{{1 - {phi:.4f}}}{{\frac{{1}}{{k_s(T)}} + \frac{{1}}{{k_{{gap}}(T)}}}} + ({phi:.4f} \cdot {gas_conductivity})")
 
@@ -271,7 +260,7 @@ Function q_sf(T_fluid, T_solid) = {q_sf_coeff:.6f} * (T_fluid - T_solid) [W/m^3]
 rho_bed = {rho_bed:.6f} [kg/m^3]  // True density including gas mass
 
 [Analytic Function: Mixture Heat Capacity Cp_eff(T)]
-Expression: ( (1-{phi:.4f})*{rho_s:.6f}*Cp_s(T) + {phi:.4f}*{rho_g}*{cp_g} ) / {rho_bed:.6f}
+Expression: (1-{phi:.4f}) * Cp_s(T)
 
 [Analytic Function: Effective Conductivity k_eff(T)]
 Variables: 
