@@ -1,1 +1,0 @@
-# BF-Burden-Properties-Calculator
