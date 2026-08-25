@@ -23,9 +23,12 @@ def paired_input(label, min_val, max_val, default_val, step, key, container=st.s
     num_key = f"num_{key}"
     slider_key = f"slider_{key}"
 
-    if val_key not in st.session_state: st.session_state[val_key] = float(default_val)
-    if num_key not in st.session_state: st.session_state[num_key] = float(default_val)
-    if slider_key not in st.session_state: st.session_state[slider_key] = float(default_val)
+    if val_key not in st.session_state:
+        st.session_state[val_key] = float(default_val)
+    if num_key not in st.session_state:
+        st.session_state[num_key] = float(default_val)
+    if slider_key not in st.session_state:
+        st.session_state[slider_key] = float(default_val)
 
     def update_from_num():
         st.session_state[slider_key] = st.session_state[num_key]
@@ -36,32 +39,63 @@ def paired_input(label, min_val, max_val, default_val, step, key, container=st.s
         st.session_state[val_key] = st.session_state[slider_key]
 
     col_label, col_input = container.columns([3, 1.2])
-    with col_label: container.markdown(f"**{label}**")
+    with col_label:
+        container.markdown(f"**{label}**")
     with col_input:
         container.number_input(
-            f"{label} num", min_value=float(min_val), max_value=float(max_val), 
-            step=float(step), format=fmt, key=num_key, on_change=update_from_num, label_visibility="collapsed"
+            f"{label} num",
+            min_value=float(min_val),
+            max_value=float(max_val), 
+            step=float(step),
+            format=fmt,
+            key=num_key,
+            on_change=update_from_num,
+            label_visibility="collapsed"
         )
         
     container.slider(
-        f"{label} slider", min_value=float(min_val), max_value=float(max_val), 
-        step=float(step), key=slider_key, on_change=update_from_slider, label_visibility="collapsed"
+        f"{label} slider",
+        min_value=float(min_val),
+        max_value=float(max_val), 
+        step=float(step),
+        key=slider_key,
+        on_change=update_from_slider,
+        label_visibility="collapsed"
     )
     return st.session_state[val_key]
 
 # --- Sidebar: Zone Selection ---
 st.sidebar.header("🗺️ Blast Furnace Region")
-bf_zone = st.sidebar.radio("Select Operating Zone", ["Granular Zone (Dry Burden Mix)", "Deadman / Lower Coke Zone (Coke + Melts)"])
+bf_zone = st.sidebar.radio(
+    "Select Operating Zone",
+    ["Granular Zone (Dry Burden Mix)", "Deadman / Lower Coke Zone (Coke + Melts)"]
+)
 is_deadman = "Deadman" in bf_zone
 
 # --- Sidebar: Material Properties ---
 st.sidebar.header("🛠️ Material Database & Particle Sizes")
 
 default_materials = {
-    'coke': {'td': 1850.0, 'bd': 480.0, 'mass': 960.0, 'dp': 0.040, 'cpa': 860.0, 'cpb': 5.40e-1, 'cpc': -2.75e7, 'ka': 0.28, 'kb': 1.75e-3, 'kc': -3.20e-7},
-    'sinter': {'td': 3450.0, 'bd': 1700.0, 'mass': 5950.0, 'dp': 0.025, 'cpa': 745.0, 'cpb': 2.60e-1, 'cpc': -1.25e7, 'ka': 0.92, 'kb': 0.48e-3, 'kc': 0.85e-7},
-    'pellet': {'td': 3350.0, 'bd': 2050.0, 'mass': 6150.0, 'dp': 0.015, 'cpa': 620.5, 'cpb': 6.15e-1, 'cpc': -1.18e7, 'ka': 1.42, 'kb': -0.38e-3, 'kc': 1.15e-7},
-    'lump': {'td': 4600.0, 'bd': 2200.0, 'mass': 3300.0, 'dp': 0.030, 'cpa': 615.0, 'cpb': 5.85e-1, 'cpc': -1.15e7, 'ka': 2.15, 'kb': -0.65e-3, 'kc': 0.25e-7}
+    'coke': {
+        'td': 1850.0, 'bd': 480.0, 'mass': 960.0, 'dp': 0.040,
+        'cpa': 860.0, 'cpb': 5.40e-1, 'cpc': -2.75e7,
+        'ka': 0.28, 'kb': 1.75e-3, 'kc': -3.20e-7
+    },
+    'sinter': {
+        'td': 3450.0, 'bd': 1700.0, 'mass': 5950.0, 'dp': 0.025,
+        'cpa': 745.0, 'cpb': 2.60e-1, 'cpc': -1.25e7,
+        'ka': 0.92, 'kb': 0.48e-3, 'kc': 0.85e-7
+    },
+    'pellet': {
+        'td': 3350.0, 'bd': 2050.0, 'mass': 6150.0, 'dp': 0.015,
+        'cpa': 620.5, 'cpb': 6.15e-1, 'cpc': -1.18e7,
+        'ka': 1.42, 'kb': -0.38e-3, 'kc': 1.15e-7
+    },
+    'lump': {
+        'td': 4600.0, 'bd': 2200.0, 'mass': 3300.0, 'dp': 0.030,
+        'cpa': 615.0, 'cpb': 5.85e-1, 'cpc': -1.15e7,
+        'ka': 2.15, 'kb': -0.65e-3, 'kc': 0.25e-7
+    }
 }
 
 active_mats = ['coke', 'sinter', 'pellet', 'lump'] if not is_deadman else ['coke']
@@ -95,13 +129,25 @@ for mat in active_mats:
         kb = col_kb.number_input("B", value=float(default_materials[mat]['kb']), key=f"{mat}_kb")
         kc = col_kc.number_input("C", value=float(default_materials[mat]['kc']), key=f"{mat}_kc")
 
-        materials[mat] = {'true_density': td, 'bulk_density': bd, 'dp': dp_val, 'cp_coeffs': (cpa, cpb, cpc), 'k_coeffs': (ka, kb, kc)}
+        materials[mat] = {
+            'true_density': td,
+            'bulk_density': bd,
+            'dp': dp_val,
+            'cp_coeffs': (cpa, cpb, cpc),
+            'k_coeffs': (ka, kb, kc)
+        }
 
 for mat in ['sinter', 'pellet', 'lump']:
     if mat not in active_mats:
         masses[mat] = 0.0
         volumes[mat] = 0.0
-        materials[mat] = materials.get(mat, {'true_density': 1.0, 'bulk_density': 1.0, 'dp': 0.02, 'cp_coeffs': (0,0,0), 'k_coeffs': (0,0,0)})
+        materials[mat] = materials.get(mat, {
+            'true_density': 1.0,
+            'bulk_density': 1.0,
+            'dp': 0.02,
+            'cp_coeffs': (0,0,0),
+            'k_coeffs': (0,0,0)
+        })
 
 # --- Sidebar: Liquid Melts Holdup & Temperature Coefficients ---
 if is_deadman:
@@ -185,6 +231,7 @@ mass_fractions = {mat: m / total_mass for mat, m in masses.items()}
 weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials[mat]['true_density'])) for mat, vol in volumes.items() if materials[mat]['true_density'] > 0)
 phi = weighted_void_sum / total_volume
 
+# Pore phase saturations
 if is_deadman:
     s_liquid_total = s_iron + s_slag
     s_gas = max(0.0, 1.0 - s_liquid_total)
@@ -370,30 +417,40 @@ with tab3:
 
 # --- COMSOL Text Export Content Generator ---
 scale_fac = 1.0 - phi
-sep_line = "=" * 50
-sub_line = "-" * 50
+p_str = f"{phi:.4f}"
+cpa_s, cpb_s, cpc_s = f"{cp_A:.6f}", f"{cp_B:.6e}", f"{cp_C:.6e}"
+ksa_s, ksb_s, ksc_s = f"{ks_A:.6f}", f"{ks_B:.6e}", f"{ks_C:.6e}"
+
+exp_cp = f"(1 - {p_str}) * ({cpa_s} + ({cpb_s})*T + ({cpc_s})*T^(-2))"
+exp_ks = f"(1 - {p_str}) * ({ksa_s} + ({ksb_s})*T + ({ksc_s})*T^2)"
 
 if is_deadman:
+    sg_s = f"{s_gas:.4f}"
+    si_s = f"{s_iron:.4f}"
+    ss_s = f"{s_slag:.4f}"
+    mi_s = f"{mu_iron:.4f}"
+    ms_s = f"{mu_slag:.4f}"
+    
     fluid_lines = [
-        sub_line,
+        "--------------------------------------------------",
         "2. DEADMAN ZONE MULTIPHASE PORE FLUID (COMSOL)",
-        sub_line,
-        f"Gas Saturation (s_gas)   = {s_gas:.4f}",
-        f"Iron Saturation (s_iron) = {s_iron:.4f}",
-        f"Slag Saturation (s_slag) = {s_slag:.4f}",
+        "--------------------------------------------------",
+        "Gas Saturation (s_gas)   = " + sg_s,
+        "Iron Saturation (s_iron) = " + si_s,
+        "Slag Saturation (s_slag) = " + ss_s,
         "",
         "[Mixture Fluid Property Expressions in Pores]",
-        f"rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)",
-        f"Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)",
-        f"k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)",
-        f"mu_fluid(T)  = {s_gas:.4f}*mu_g(T) + {s_iron:.4f}*{mu_iron:.4f} + {s_slag:.4f}*{mu_slag:.4f}"
-    ]
+        "rho_fluid(T) = " + sg_s + "*rho_g(T) + " + si_s + "*rho_iron(T) + " + ss_s + "*rho_slag(T)",
+        "Cp_fluid(T)  = " + sg_s + "*Cp_g(T) + " + si_s + "*Cp_iron(T) + " + ss_s + "*Cp_slag(T)",
+        "k_fluid(T)   = " + sg_s + "*k_g(T) + " + si_s + "*k_iron(T) + " + ss_s + "*k_slag(T)",
+        "mu_fluid(T)  = " + sg_s + "*mu_g(T) + " + si_s + "*" + mi_s + " + " + ss_s + "*" + ms_s
+    ]]
     fluid_export_text = "\n".join(fluid_lines)
 else:
     fluid_lines = [
-        sub_line,
+        "--------------------------------------------------",
         "2. GRANULAR ZONE PORE FLUID (PURE GAS PHASE)",
-        sub_line,
+        "--------------------------------------------------",
         "Gas Saturation (s_gas)   = 1.0000",
         "",
         "[Pure Gas Property Expressions in Pores]",
@@ -407,17 +464,32 @@ else:
 zone_prefix = "Deadman" if is_deadman else "Granular"
 
 export_lines = [
-    sep_line,
+    "==================================================",
     "BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)",
-    f"Operating Zone: {bf_zone}",
-    f"Ref Temp: {temperature_k:.2f} K | Porosity: {phi:.4f}",
-    sep_line,
+    "Operating Zone: " + str(bf_zone),
+    "Ref Temp: " + f"{temperature_k:.2f}" + " K | Porosity: " + p_str,
+    "==================================================",
     "",
-    sub_line,
+    "--------------------------------------------------",
     "1. SOLID MATRIX SCALED PROPERTIES",
-    sub_line,
-    f"Porosity (phi) = {phi:.4f}",
-    f"Scaling Factor = (1 - phi) = {scale_fac:.4f}",
+    "--------------------------------------------------",
+    "Porosity (phi) = " + p_str,
+    "Scaling Factor = (1 - phi) = " + f"{scale_fac:.4f}",
     "",
     "[Analytic Function: Scaled Solid Specific Heat Cp_eff(T)]",
-    f"Expression: (1 - {p
+    "Expression: " + exp_cp,
+    "",
+    "[Analytic Function: Scaled Solid Thermal Conductivity k_eff(T)]",
+    "Expression: " + exp_ks,
+    "",
+    fluid_export_text,
+    "=================================================="
+]
+comsol_text = "\n".join(export_lines)
+
+st.download_button(
+    label="📥 Download Temperature-Dependent COMSOL Variables (.txt)",
+    data=comsol_text,
+    file_name="COMSOL_BF_" + zone_prefix + "_Functions.txt",
+    mime="text/plain"
+)
