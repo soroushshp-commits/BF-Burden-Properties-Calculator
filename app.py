@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd
+import plotly.express as px
 
 # Page Configuration
 st.set_page_config(
@@ -12,6 +14,7 @@ st.markdown("""
 **Model Architecture Updates:** 
 * **Solid Matrix Scaling:** $C_{p,s}$ and $k_s$ are multiplied strictly by $(1 - \phi)$ without density ($\rho$) coupling.
 * **Multiphase Pore Fluid Mixture:** Pore fluid properties use direct saturation-weighted averages ($s_{gas}, s_{iron}, s_{slag}$).
+* **Burden Visualization:** Added interactive Mass vs. Volume distribution charts.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -185,6 +188,42 @@ phi = weighted_void_sum / total_volume
 # Pore phase saturations
 s_liquid_total = s_iron + s_slag
 s_gas = max(0.0, 1.0 - s_liquid_total)
+
+
+# --- Burden Visualization ---
+st.markdown("---")
+st.subheader("🧱 Burden Composition (Solid Matrix)")
+
+# Create DataFrame for visualizations
+df_burden = pd.DataFrame({
+    "Material": [m.capitalize() for m in active_mats],
+    "Mass (kg)": [masses[m] for m in active_mats],
+    "Volume (m³)": [volumes[m] for m in active_mats]
+})
+
+col_mass, col_vol = st.columns(2)
+
+# Custom color mapping to ensure consistency (e.g. Coke is always grey/black)
+color_map = {"Coke": "#4A4A4A", "Sinter": "#D2691E", "Pellet": "#A0522D", "Lump": "#8B4513"}
+
+with col_mass:
+    fig_mass = px.pie(
+        df_burden, values='Mass (kg)', names='Material', 
+        title="Mass Distribution", hole=0.4,
+        color='Material', color_discrete_map=color_map
+    )
+    fig_mass.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+    st.plotly_chart(fig_mass, use_container_width=True)
+
+with col_vol:
+    fig_vol = px.pie(
+        df_burden, values='Volume (m³)', names='Material', 
+        title="Volume Distribution", hole=0.4,
+        color='Material', color_discrete_map=color_map
+    )
+    fig_vol.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+    st.plotly_chart(fig_vol, use_container_width=True)
+
 
 # --- Physics Calculation Engine ---
 def calculate_physics(T):
@@ -364,8 +403,4 @@ Expression: (1 - {phi:.4f}) * ({ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2)
 """
 
 st.download_button(
-    label="📥 Download Multiphase Temperature-Dependent COMSOL Variables (.txt)",
-    data=comsol_text,
-    file_name=f"COMSOL_BF_{bf_zone.split()[0]}_Multiphase_Functions.txt",
-    mime="text/plain"
-)
+    label="📥 Download Multiphase Temperature-Dependent COMS
