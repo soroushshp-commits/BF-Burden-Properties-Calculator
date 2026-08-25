@@ -374,36 +374,41 @@ with tab3:
 scale_fac = 1.0 - phi
 
 if is_deadman:
-    fluid_export_text = (
-        "--------------------------------------------------------------------\n"
-        "2. DEADMAN ZONE MULTIPHASE PORE FLUID MIXTURE (COMSOL)\n"
-        "--------------------------------------------------------------------\n"
-        f"Gas Saturation (s_gas)   = {s_gas:.4f}\n"
-        f"Iron Saturation (s_iron) = {s_iron:.4f}\n"
-        f"Slag Saturation (s_slag) = {s_slag:.4f}\n\n"
-        "[Mixture Fluid Property Expressions in Pores]\n"
-        f"rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)\n"
-        f"Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)\n"
-        f"k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)\n"
+    fluid_lines = [
+        "--------------------------------------------------",
+        "2. DEADMAN ZONE MULTIPHASE PORE FLUID (COMSOL)",
+        "--------------------------------------------------",
+        f"Gas Saturation (s_gas)   = {s_gas:.4f}",
+        f"Iron Saturation (s_iron) = {s_iron:.4f}",
+        f"Slag Saturation (s_slag) = {s_slag:.4f}",
+        "",
+        "[Mixture Fluid Property Expressions in Pores]",
+        f"rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)",
+        f"Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)",
+        f"k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)",
         f"mu_fluid(T)  = {s_gas:.4f}*mu_g(T) + {s_iron:.4f}*{mu_iron:.4f} + {s_slag:.4f}*{mu_slag:.4f}"
-    )
+    ]
+    fluid_export_text = "\n".join(fluid_lines)
 else:
-    fluid_export_text = (
-        "--------------------------------------------------------------------\n"
-        "2. GRANULAR ZONE PORE FLUID PROPERTIES (COMSOL - PURE GAS PHASE)\n"
-        "--------------------------------------------------------------------\n"
-        "Gas Saturation (s_gas)   = 1.0000 (No Liquid Melts Present)\n\n"
-        "[Pure Gas Property Expressions in Pores]\n"
-        "rho_fluid(T) = rho_g(T)\n"
-        "Cp_fluid(T)  = Cp_g(T)\n"
-        "k_fluid(T)   = k_g(T)\n"
+    fluid_lines = [
+        "--------------------------------------------------",
+        "2. GRANULAR ZONE PORE FLUID (PURE GAS PHASE)",
+        "--------------------------------------------------",
+        "Gas Saturation (s_gas)   = 1.0000",
+        "",
+        "[Pure Gas Property Expressions in Pores]",
+        "rho_fluid(T) = rho_g(T)",
+        "Cp_fluid(T)  = Cp_g(T)",
+        "k_fluid(T)   = k_g(T)",
         "mu_fluid(T)  = mu_g(T)"
-    )
+    ]
+    fluid_export_text = "\n".join(fluid_lines)
 
 zone_prefix = "Deadman" if is_deadman else "Granular"
 
-comsol_text = (
-    "====================================================================\n"
-    "BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)\n"
-    f"Operating Zone: {bf_zone}\n"
-    f"Evaluate
+export_lines = [
+    "==================================================",
+    "BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)",
+    f"Operating Zone: {bf_zone}",
+    f"Ref Temp: {temperature_k:.2f} K | Porosity: {phi:.4f}",
+    "=========
