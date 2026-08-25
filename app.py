@@ -402,7 +402,8 @@ else:
 
 zone_prefix = "Deadman" if is_deadman else "Granular"
 
-comsol_text = f"""====================================================================
-BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)
-Operating Zone: {bf_zone}
-Evaluated at Reference Temp: {tempera
+comsol_text = (
+    "====================================================================\n"
+    "BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)\n"
+    f"Operating Zone: {bf_zone}\n"
+    f"Evaluate
