@@ -9,12 +9,12 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Multiphase Pore Fluid & Coke Skeleton)")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator")
 st.markdown("""
 **Model Architecture Updates:** 
+* **Zone-Aware Fluid Mechanics:** Granular Zone strictly operates as single-phase gas ($s_{gas} = 1.0$); Deadman Zone models dynamic multiphase pore flow (Gas + Iron + Slag).
 * **Solid Matrix Scaling:** $C_{p,s}$ and $k_s$ are multiplied strictly by $(1 - \phi)$ without density ($\rho$) coupling.
-* **Multiphase Pore Fluid Mixture:** Pore fluid properties use direct saturation-weighted averages ($s_{gas}, s_{iron}, s_{slag}$).
-* **Burden Visualization:** Added interactive Mass vs. Volume distribution charts.
+* **Burden Visualization:** Interactive Mass vs. Volume distribution charts.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -104,16 +104,6 @@ for mat in ['sinter', 'pellet', 'lump']:
         materials[mat] = materials.get(mat, {'true_density': 1.0, 'bulk_density': 1.0, 'dp': 0.02, 'cp_coeffs': (0,0,0), 'k_coeffs': (0,0,0)})
 
 # --- Sidebar: Liquid Melts Holdup & Temperature Coefficients ---
-s_iron, mu_iron = 0.0, 0.005
-rho_iron_A, rho_iron_B = 7000.0, -0.5
-cp_iron_A, cp_iron_B = 800.0, 0.05
-k_iron_A, k_iron_B = 30.0, 0.0
-
-s_slag, mu_slag = 0.0, 0.05
-rho_slag_A, rho_slag_B = 2600.0, -0.2
-cp_slag_A, cp_slag_B = 1200.0, 0.1
-k_slag_A, k_slag_B = 3.5, 0.0
-
 if is_deadman:
     st.sidebar.header("🧪 Deadman Liquid Melts & Properties")
     with st.sidebar.expander("Liquid Iron Parameters & T-Coeffs", expanded=True):
@@ -147,6 +137,17 @@ if is_deadman:
         col_ks1, col_ks2 = st.columns(2)
         k_slag_A = col_ks1.number_input("k_slag A", value=3.5, key="ks_a")
         k_slag_B = col_ks2.number_input("k_slag B", value=0.0, key="ks_b")
+else:
+    # Strictly zero out liquid melts in dry granular zone
+    s_iron, mu_iron = 0.0, 0.005
+    rho_iron_A, rho_iron_B = 7000.0, -0.5
+    cp_iron_A, cp_iron_B = 800.0, 0.05
+    k_iron_A, k_iron_B = 30.0, 0.0
+
+    s_slag, mu_slag = 0.0, 0.05
+    rho_slag_A, rho_slag_B = 2600.0, -0.2
+    cp_slag_A, cp_slag_B = 1200.0, 0.1
+    k_slag_A, k_slag_B = 3.5, 0.0
 
 # --- Advanced Settings (Gas Flow & Temperature-Dependent Polynomials) ---
 st.sidebar.header("💨 Gas Flow Properties & Polynomials")
@@ -186,14 +187,18 @@ weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials
 phi = weighted_void_sum / total_volume
 
 # Pore phase saturations
-s_liquid_total = s_iron + s_slag
-s_gas = max(0.0, 1.0 - s_liquid_total)
+if is_deadman:
+    s_liquid_total = s_iron + s_slag
+    s_gas = max(0.0, 1.0 - s_liquid_total)
+else:
+    s_gas = 1.0
+    s_iron = 0.0
+    s_slag = 0.0
 
 # --- Burden Visualization ---
 st.markdown("---")
 st.subheader("🧱 Burden Composition (Solid Matrix)")
 
-# Create DataFrame for visualizations
 df_burden = pd.DataFrame({
     "Material": [m.capitalize() for m in active_mats],
     "Mass (kg)": [masses[m] for m in active_mats],
@@ -201,7 +206,6 @@ df_burden = pd.DataFrame({
 })
 
 col_mass, col_vol = st.columns(2)
-
 color_map = {"Coke": "#4A4A4A", "Sinter": "#D2691E", "Pellet": "#A0522D", "Lump": "#8B4513"}
 
 with col_mass:
@@ -307,10 +311,12 @@ kg_A, kg_B, kg_C, kg_D = coeffs['kg']
 st.markdown("---")
 st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K")
 
+tab3_label = "⚙️ Multiphase Pore Fluid (Gas + Melts)" if is_deadman else "💨 Gas Phase Pore Fluid"
+
 tab1, tab2, tab3 = st.tabs([
     "🟢 COMSOL LTNE: Solid Sub-Node", 
     "🟠 COMSOL Solid Matrix (Scaled by [1-φ])",
-    "⚙️ Multiphase Pore Fluid Mixture Properties & Coupling"
+    tab3_label
 ])
 
 with tab1:
@@ -337,13 +343,16 @@ with tab2:
     st.latex(rf"k_{{eff}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
 
 with tab3:
-    st.info(f"💡 **Multiphase Pore Fluid Mixture evaluated at T = {temperature_k:.1f} K** (Gas + Liquid Iron + Liquid Slag).")
+    if is_deadman:
+        st.info(f"💡 **Multiphase Pore Fluid Mixture evaluated at T = {temperature_k:.1f} K** (Gas + Liquid Iron + Liquid Slag).")
+    else:
+        st.info(f"💡 **Gas Phase Pore Fluid evaluated at T = {temperature_k:.1f} K** (Single-Phase Gas Flow in Granular Bed).")
     
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Mixture Density ρ_fluid(T)", f"{fluid_state['rho']:.3f} kg/m³")
-    col2.metric("Mixture Specific Heat Cp_fluid(T)", f"{fluid_state['cp']:.2f} J/(kg·K)")
-    col3.metric("Mixture Conductivity k_fluid(T)", f"{fluid_state['k']:.4f} W/(m·K)")
-    col4.metric("Mixture Viscosity μ_fluid(T)", f"{fluid_state['mu']:.4f} Pa·s")
+    col1.metric("Fluid Density ρ_fluid(T)", f"{fluid_state['rho']:.3f} kg/m³")
+    col2.metric("Fluid Specific Heat Cp_fluid(T)", f"{fluid_state['cp']:.2f} J/(kg·K)")
+    col3.metric("Fluid Conductivity k_fluid(T)", f"{fluid_state['k']:.4f} W/(m·K)")
+    col4.metric("Fluid Viscosity μ_fluid(T)", f"{fluid_state['mu']:.4f} Pa·s")
 
     st.markdown("#### Dimensionless Numbers & Interphase Coupling")
     dcol1, dcol2, dcol3 = st.columns(3)
@@ -351,26 +360,41 @@ with tab3:
     dcol2.metric("Prandtl Number Pr(T)", f"{Pr:.3f}")
     dcol3.metric("Nusselt Number Nu(T)", f"{Nu:.2f}")
 
-    st.markdown("#### Analytical Mixture Formulations in Pores")
-    st.latex(r"\rho_{fluid}(T) = s_{gas}\rho_g(T) + s_{iron}\rho_{iron}(T) + s_{slag}\rho_{slag}(T)")
-    st.latex(r"C_{p,fluid}(T) = s_{gas}C_{p,g}(T) + s_{iron}C_{p,iron}(T) + s_{slag}C_{p,slag}(T)")
-    st.latex(r"k_{fluid}(T) = s_{gas}k_g(T) + s_{iron}k_{iron}(T) + s_{slag}k_{slag}(T)")
+    st.markdown("#### Analytical Formulations in Pores")
+    if is_deadman:
+        st.latex(r"\rho_{fluid}(T) = s_{gas}\rho_g(T) + s_{iron}\rho_{iron}(T) + s_{slag}\rho_{slag}(T)")
+        st.latex(r"C_{p,fluid}(T) = s_{gas}C_{p,g}(T) + s_{iron}C_{p,iron}(T) + s_{slag}C_{p,slag}(T)")
+        st.latex(r"k_{fluid}(T) = s_{gas}k_g(T) + s_{iron}k_{iron}(T) + s_{slag}k_{slag}(T)")
+    else:
+        st.latex(r"\rho_{fluid}(T) = \rho_g(T) = A + B\cdot T + C\cdot T^2 + D\cdot T^3")
+        st.latex(r"C_{p,fluid}(T) = C_{p,g}(T) = A + B\cdot T + C\cdot T^2 + D\cdot T^3")
+        st.latex(r"k_{fluid}(T) = k_g(T) = A + B\cdot T + C\cdot T^2 + D\cdot T^3")
 
 # --- COMSOL Text Export Content Generator ---
-deadman_export_text = f"""
---------------------------------------------------------------------
-DEADMAN ZONE MULTIPHASE PORE FLUID MIXTURE (COMSOL)
+if is_deadman:
+    fluid_export_text = f"""--------------------------------------------------------------------
+2. DEADMAN ZONE MULTIPHASE PORE FLUID MIXTURE (COMSOL)
 --------------------------------------------------------------------
 Gas Saturation (s_gas)   = {s_gas:.4f}
 Iron Saturation (s_iron) = {s_iron:.4f}
 Slag Saturation (s_slag) = {s_slag:.4f}
 
-[Mixture Fluid Property Expressions in Pores (Cp uncoupled from rho)]
+[Mixture Fluid Property Expressions in Pores]
 rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)
 Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)
 k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)
-mu_fluid(T)  = {s_gas:.4f}*mu_g(T) + {s_iron:.4f}*{mu_iron:.4f} + {s_slag:.4f}*{mu_slag:.4f}
-""" if is_deadman else ""
+mu_fluid(T)  = {s_gas:.4f}*mu_g(T) + {s_iron:.4f}*{mu_iron:.4f} + {s_slag:.4f}*{mu_slag:.4f}"""
+else:
+    fluid_export_text = f"""--------------------------------------------------------------------
+2. GRANULAR ZONE PORE FLUID PROPERTIES (COMSOL - PURE GAS PHASE)
+--------------------------------------------------------------------
+Gas Saturation (s_gas)   = 1.0000 (No Liquid Melts Present)
+
+[Pure Gas Property Expressions in Pores]
+rho_fluid(T) = rho_g(T)
+Cp_fluid(T)  = Cp_g(T)
+k_fluid(T)   = k_g(T)
+mu_fluid(T)  = mu_g(T)"""
 
 comsol_text = f"""====================================================================
 BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)
@@ -380,22 +404,4 @@ Evaluated at Reference Temp: {temperature_k:.2f} K | Total Porosity (phi): {phi:
 
 --------------------------------------------------------------------
 1. SOLID MATRIX SCALED PROPERTIES (Cp and k scaled by [1 - phi], no density)
---------------------------------------------------------------------
-Porosity (phi) = {phi:.4f}
-Scaling Factor = (1 - phi) = {(1.0 - phi):.4f}
-
-[Analytic Function: Scaled Solid Specific Heat Cp_eff(T)]
-Expression: (1 - {phi:.4f}) * ({cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2))
-
-[Analytic Function: Scaled Solid Thermal Conductivity k_eff(T)]
-Expression: (1 - {phi:.4f}) * ({ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2)
-{deadman_export_text}
-====================================================================
-"""
-
-st.download_button(
-    label="📥 Download Multiphase Temperature-Dependent COMSOL Variables (.txt)",
-    data=comsol_text,
-    file_name=f"COMSOL_BF_{bf_zone.split()[0]}_Multiphase_Functions.txt",
-    mime="text/plain"
-)
+-------------------------------------------------------------
