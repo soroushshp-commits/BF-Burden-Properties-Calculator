@@ -1,2 +1,6 @@
 streamlit>=1.30.0
 numpy>=1.22.0
+plotly
+pandas
+numpy
+scipy
