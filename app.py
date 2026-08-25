@@ -189,7 +189,6 @@ phi = weighted_void_sum / total_volume
 s_liquid_total = s_iron + s_slag
 s_gas = max(0.0, 1.0 - s_liquid_total)
 
-
 # --- Burden Visualization ---
 st.markdown("---")
 st.subheader("🧱 Burden Composition (Solid Matrix)")
@@ -203,7 +202,6 @@ df_burden = pd.DataFrame({
 
 col_mass, col_vol = st.columns(2)
 
-# Custom color mapping to ensure consistency (e.g. Coke is always grey/black)
 color_map = {"Coke": "#4A4A4A", "Sinter": "#D2691E", "Pellet": "#A0522D", "Lump": "#8B4513"}
 
 with col_mass:
@@ -223,7 +221,6 @@ with col_vol:
     )
     fig_vol.update_layout(margin=dict(t=40, b=0, l=0, r=0))
     st.plotly_chart(fig_vol, use_container_width=True)
-
 
 # --- Physics Calculation Engine ---
 def calculate_physics(T):
@@ -247,18 +244,14 @@ def calculate_physics(T):
         ks_s += x * (A + B * T + C * (T ** 2))
         rho_s += x * materials[m]['true_density']
 
-    # Mixture bulk density
     rho_bulk = total_mass / total_volume if total_volume > 0 else 0.0
 
-    # Effective solid properties: strictly multiplying Cp and k by (1 - phi), no density multiplication
     cp_s_eff = cp_s * (1.0 - phi)
     ks_s_eff = ks_s * (1.0 - phi)
 
-    # Effective Sauter Mean Diameter via Harmonic Mean of solid volume fractions
     inv_dp_sum = sum(vol_fracs[m] / materials[m]['dp'] for m in vol_fracs if materials[m]['dp'] > 0)
     dp_eff = (1.0 / inv_dp_sum) if inv_dp_sum > 0 else 0.025
 
-    # Pure Fluid Properties at Temperature T
     rho_g = rhog_A + rhog_B * T + rhog_C * (T ** 2) + rhog_D * (T ** 3)
     mu_g = mu_A + mu_B * T + mu_C * (T ** 2) + mu_D * (T ** 3)
     cp_g = cpg_A + cpg_B * T + cpg_C * (T ** 2) + cpg_D * (T ** 3)
@@ -272,7 +265,6 @@ def calculate_physics(T):
     cp_slag = cp_slag_A + cp_slag_B * T
     k_slag = k_slag_A + k_slag_B * T
 
-    # Multiphase Pore Fluid Mixture Averaging (Strict separation of Cp and Density)
     if is_deadman:
         rho_fluid = (s_gas * rho_g) + (s_iron * rho_iron) + (s_slag * rho_slag)
         cp_fluid = (s_gas * cp_g) + (s_iron * cp_iron) + (s_slag * cp_slag)
@@ -284,7 +276,6 @@ def calculate_physics(T):
         k_fluid = kg
         mu_fluid = mu_g
 
-    # Interphase Heat Transfer (Wakao and Kaguei using pore fluid properties)
     Re = (rho_fluid * vg * dp_eff) / mu_fluid if mu_fluid > 0 else 0
     Pr = (cp_fluid * mu_fluid) / k_fluid if k_fluid > 0 else 0
     Nu = 2.0 + 1.1 * (Pr ** (1/3)) * (Re ** 0.6)
@@ -403,4 +394,8 @@ Expression: (1 - {phi:.4f}) * ({ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2)
 """
 
 st.download_button(
-    label="📥 Download Multiphase Temperature-Dependent COMS
+    label="📥 Download Multiphase Temperature-Dependent COMSOL Variables (.txt)",
+    data=comsol_text,
+    file_name=f"COMSOL_BF_{bf_zone.split()[0]}_Multiphase_Functions.txt",
+    mime="text/plain"
+)
