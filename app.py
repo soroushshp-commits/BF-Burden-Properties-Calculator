@@ -138,7 +138,6 @@ if is_deadman:
         k_slag_A = col_ks1.number_input("k_slag A", value=3.5, key="ks_a")
         k_slag_B = col_ks2.number_input("k_slag B", value=0.0, key="ks_b")
 else:
-    # Strictly zero out liquid melts in dry granular zone
     s_iron, mu_iron = 0.0, 0.005
     rho_iron_A, rho_iron_B = 7000.0, -0.5
     cp_iron_A, cp_iron_B = 800.0, 0.05
@@ -186,7 +185,6 @@ mass_fractions = {mat: m / total_mass for mat, m in masses.items()}
 weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials[mat]['true_density'])) for mat, vol in volumes.items() if materials[mat]['true_density'] > 0)
 phi = weighted_void_sum / total_volume
 
-# Pore phase saturations
 if is_deadman:
     s_liquid_total = s_iron + s_slag
     s_gas = max(0.0, 1.0 - s_liquid_total)
@@ -372,12 +370,14 @@ with tab3:
 
 # --- COMSOL Text Export Content Generator ---
 scale_fac = 1.0 - phi
+sep_line = "=" * 50
+sub_line = "-" * 50
 
 if is_deadman:
     fluid_lines = [
-        "--------------------------------------------------",
+        sub_line,
         "2. DEADMAN ZONE MULTIPHASE PORE FLUID (COMSOL)",
-        "--------------------------------------------------",
+        sub_line,
         f"Gas Saturation (s_gas)   = {s_gas:.4f}",
         f"Iron Saturation (s_iron) = {s_iron:.4f}",
         f"Slag Saturation (s_slag) = {s_slag:.4f}",
@@ -391,9 +391,9 @@ if is_deadman:
     fluid_export_text = "\n".join(fluid_lines)
 else:
     fluid_lines = [
-        "--------------------------------------------------",
+        sub_line,
         "2. GRANULAR ZONE PORE FLUID (PURE GAS PHASE)",
-        "--------------------------------------------------",
+        sub_line,
         "Gas Saturation (s_gas)   = 1.0000",
         "",
         "[Pure Gas Property Expressions in Pores]",
@@ -407,8 +407,17 @@ else:
 zone_prefix = "Deadman" if is_deadman else "Granular"
 
 export_lines = [
-    "==================================================",
+    sep_line,
     "BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)",
     f"Operating Zone: {bf_zone}",
     f"Ref Temp: {temperature_k:.2f} K | Porosity: {phi:.4f}",
-    "=========
+    sep_line,
+    "",
+    sub_line,
+    "1. SOLID MATRIX SCALED PROPERTIES",
+    sub_line,
+    f"Porosity (phi) = {phi:.4f}",
+    f"Scaling Factor = (1 - phi) = {scale_fac:.4f}",
+    "",
+    "[Analytic Function: Scaled Solid Specific Heat Cp_eff(T)]",
+    f"Expression: (1 - {p
