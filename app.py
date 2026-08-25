@@ -275,7 +275,7 @@ kg_A, kg_B, kg_C, kg_D = coeffs['kg']
 
 # --- Display Results ---
 st.markdown("---")
-st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K (Total Porosity φ = {phi:.4f})")
+st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K")
 
 tab1, tab2, tab3 = st.tabs([
     "🟢 COMSOL LTNE: Solid Sub-Node", 
@@ -285,10 +285,11 @@ tab1, tab2, tab3 = st.tabs([
 
 with tab1:
     st.info("💡 **LTNE Solid Matrix (Intrinsic).** Uses True Density and pure skeletal properties.")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("True Density (ρ_s)", f"{rho_s:.2f} kg/m³")
-    col2.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
-    col3.metric("Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Void Fraction (Porosity φ)", f"{phi:.4f}")
+    col2.metric("True Density (ρ_s)", f"{rho_s:.2f} kg/m³")
+    col3.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
+    col4.metric("Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
     
     st.markdown("#### Analytical Functions (T)")
     st.latex(rf"C_{{p,s}}(T) = {cp_A:.4f} + ({cp_B:.4e})T + ({cp_C:.4e})T^{{-2}}")
