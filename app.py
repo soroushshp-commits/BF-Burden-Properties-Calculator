@@ -9,11 +9,11 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Multiphase Pore Fluid & Coke Skeleton)")
 st.markdown("""
 **Model Architecture Updates:** 
-* **Zone-Aware Fluid Mechanics:** Granular Zone strictly operates as single-phase gas ($s_{gas} = 1.0$); Deadman Zone models dynamic multiphase pore flow (Gas + Iron + Slag).
 * **Solid Matrix Scaling:** $C_{p,s}$ and $k_s$ are multiplied strictly by $(1 - \phi)$ without density ($\rho$) coupling.
+* **Zone-Aware Pore Fluid:** Single-phase gas formulations in dry burden zones; direct saturation-weighted averages ($s_{gas}, s_{iron}, s_{slag}$) in the Deadman zone.
 * **Burden Visualization:** Interactive Mass vs. Volume distribution charts.
 """)
 
@@ -23,12 +23,9 @@ def paired_input(label, min_val, max_val, default_val, step, key, container=st.s
     num_key = f"num_{key}"
     slider_key = f"slider_{key}"
 
-    if val_key not in st.session_state:
-        st.session_state[val_key] = float(default_val)
-    if num_key not in st.session_state:
-        st.session_state[num_key] = float(default_val)
-    if slider_key not in st.session_state:
-        st.session_state[slider_key] = float(default_val)
+    if val_key not in st.session_state: st.session_state[val_key] = float(default_val)
+    if num_key not in st.session_state: st.session_state[num_key] = float(default_val)
+    if slider_key not in st.session_state: st.session_state[slider_key] = float(default_val)
 
     def update_from_num():
         st.session_state[slider_key] = st.session_state[num_key]
@@ -39,63 +36,32 @@ def paired_input(label, min_val, max_val, default_val, step, key, container=st.s
         st.session_state[val_key] = st.session_state[slider_key]
 
     col_label, col_input = container.columns([3, 1.2])
-    with col_label:
-        container.markdown(f"**{label}**")
+    with col_label: container.markdown(f"**{label}**")
     with col_input:
         container.number_input(
-            f"{label} num",
-            min_value=float(min_val),
-            max_value=float(max_val), 
-            step=float(step),
-            format=fmt,
-            key=num_key,
-            on_change=update_from_num,
-            label_visibility="collapsed"
+            f"{label} num", min_value=float(min_val), max_value=float(max_val), 
+            step=float(step), format=fmt, key=num_key, on_change=update_from_num, label_visibility="collapsed"
         )
         
     container.slider(
-        f"{label} slider",
-        min_value=float(min_val),
-        max_value=float(max_val), 
-        step=float(step),
-        key=slider_key,
-        on_change=update_from_slider,
-        label_visibility="collapsed"
+        f"{label} slider", min_value=float(min_val), max_value=float(max_val), 
+        step=float(step), key=slider_key, on_change=update_from_slider, label_visibility="collapsed"
     )
     return st.session_state[val_key]
 
 # --- Sidebar: Zone Selection ---
 st.sidebar.header("🗺️ Blast Furnace Region")
-bf_zone = st.sidebar.radio(
-    "Select Operating Zone",
-    ["Granular Zone (Dry Burden Mix)", "Deadman / Lower Coke Zone (Coke + Melts)"]
-)
+bf_zone = st.sidebar.radio("Select Operating Zone", ["Granular Zone (Dry Burden Mix)", "Deadman / Lower Coke Zone (Coke + Melts)"])
 is_deadman = "Deadman" in bf_zone
 
 # --- Sidebar: Material Properties ---
 st.sidebar.header("🛠️ Material Database & Particle Sizes")
 
 default_materials = {
-    'coke': {
-        'td': 1850.0, 'bd': 480.0, 'mass': 960.0, 'dp': 0.040,
-        'cpa': 860.0, 'cpb': 5.40e-1, 'cpc': -2.75e7,
-        'ka': 0.28, 'kb': 1.75e-3, 'kc': -3.20e-7
-    },
-    'sinter': {
-        'td': 3450.0, 'bd': 1700.0, 'mass': 5950.0, 'dp': 0.025,
-        'cpa': 745.0, 'cpb': 2.60e-1, 'cpc': -1.25e7,
-        'ka': 0.92, 'kb': 0.48e-3, 'kc': 0.85e-7
-    },
-    'pellet': {
-        'td': 3350.0, 'bd': 2050.0, 'mass': 6150.0, 'dp': 0.015,
-        'cpa': 620.5, 'cpb': 6.15e-1, 'cpc': -1.18e7,
-        'ka': 1.42, 'kb': -0.38e-3, 'kc': 1.15e-7
-    },
-    'lump': {
-        'td': 4600.0, 'bd': 2200.0, 'mass': 3300.0, 'dp': 0.030,
-        'cpa': 615.0, 'cpb': 5.85e-1, 'cpc': -1.15e7,
-        'ka': 2.15, 'kb': -0.65e-3, 'kc': 0.25e-7
-    }
+    'coke': {'td': 1850.0, 'bd': 480.0, 'mass': 960.0, 'dp': 0.040, 'cpa': 860.0, 'cpb': 5.40e-1, 'cpc': -2.75e7, 'ka': 0.28, 'kb': 1.75e-3, 'kc': -3.20e-7},
+    'sinter': {'td': 3450.0, 'bd': 1700.0, 'mass': 5950.0, 'dp': 0.025, 'cpa': 745.0, 'cpb': 2.60e-1, 'cpc': -1.25e7, 'ka': 0.92, 'kb': 0.48e-3, 'kc': 0.85e-7},
+    'pellet': {'td': 3350.0, 'bd': 2050.0, 'mass': 6150.0, 'dp': 0.015, 'cpa': 620.5, 'cpb': 6.15e-1, 'cpc': -1.18e7, 'ka': 1.42, 'kb': -0.38e-3, 'kc': 1.15e-7},
+    'lump': {'td': 4600.0, 'bd': 2200.0, 'mass': 3300.0, 'dp': 0.030, 'cpa': 615.0, 'cpb': 5.85e-1, 'cpc': -1.15e7, 'ka': 2.15, 'kb': -0.65e-3, 'kc': 0.25e-7}
 }
 
 active_mats = ['coke', 'sinter', 'pellet', 'lump'] if not is_deadman else ['coke']
@@ -129,27 +95,25 @@ for mat in active_mats:
         kb = col_kb.number_input("B", value=float(default_materials[mat]['kb']), key=f"{mat}_kb")
         kc = col_kc.number_input("C", value=float(default_materials[mat]['kc']), key=f"{mat}_kc")
 
-        materials[mat] = {
-            'true_density': td,
-            'bulk_density': bd,
-            'dp': dp_val,
-            'cp_coeffs': (cpa, cpb, cpc),
-            'k_coeffs': (ka, kb, kc)
-        }
+        materials[mat] = {'true_density': td, 'bulk_density': bd, 'dp': dp_val, 'cp_coeffs': (cpa, cpb, cpc), 'k_coeffs': (ka, kb, kc)}
 
 for mat in ['sinter', 'pellet', 'lump']:
     if mat not in active_mats:
         masses[mat] = 0.0
         volumes[mat] = 0.0
-        materials[mat] = materials.get(mat, {
-            'true_density': 1.0,
-            'bulk_density': 1.0,
-            'dp': 0.02,
-            'cp_coeffs': (0,0,0),
-            'k_coeffs': (0,0,0)
-        })
+        materials[mat] = materials.get(mat, {'true_density': 1.0, 'bulk_density': 1.0, 'dp': 0.02, 'cp_coeffs': (0,0,0), 'k_coeffs': (0,0,0)})
 
 # --- Sidebar: Liquid Melts Holdup & Temperature Coefficients ---
+s_iron, mu_iron = 0.0, 0.005
+rho_iron_A, rho_iron_B = 7000.0, -0.5
+cp_iron_A, cp_iron_B = 800.0, 0.05
+k_iron_A, k_iron_B = 30.0, 0.0
+
+s_slag, mu_slag = 0.0, 0.05
+rho_slag_A, rho_slag_B = 2600.0, -0.2
+cp_slag_A, cp_slag_B = 1200.0, 0.1
+k_slag_A, k_slag_B = 3.5, 0.0
+
 if is_deadman:
     st.sidebar.header("🧪 Deadman Liquid Melts & Properties")
     with st.sidebar.expander("Liquid Iron Parameters & T-Coeffs", expanded=True):
@@ -183,16 +147,6 @@ if is_deadman:
         col_ks1, col_ks2 = st.columns(2)
         k_slag_A = col_ks1.number_input("k_slag A", value=3.5, key="ks_a")
         k_slag_B = col_ks2.number_input("k_slag B", value=0.0, key="ks_b")
-else:
-    s_iron, mu_iron = 0.0, 0.005
-    rho_iron_A, rho_iron_B = 7000.0, -0.5
-    cp_iron_A, cp_iron_B = 800.0, 0.05
-    k_iron_A, k_iron_B = 30.0, 0.0
-
-    s_slag, mu_slag = 0.0, 0.05
-    rho_slag_A, rho_slag_B = 2600.0, -0.2
-    cp_slag_A, cp_slag_B = 1200.0, 0.1
-    k_slag_A, k_slag_B = 3.5, 0.0
 
 # --- Advanced Settings (Gas Flow & Temperature-Dependent Polynomials) ---
 st.sidebar.header("💨 Gas Flow Properties & Polynomials")
@@ -356,12 +310,12 @@ kg_A, kg_B, kg_C, kg_D = coeffs['kg']
 st.markdown("---")
 st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K")
 
-tab3_label = "⚙️ Multiphase Pore Fluid (Gas + Melts)" if is_deadman else "💨 Gas Phase Pore Fluid"
+tab3_header = "⚙️ Multiphase Pore Fluid Mixture & Coupling" if is_deadman else "⚙️ Single-Phase Gas Fluid Properties & Coupling"
 
 tab1, tab2, tab3 = st.tabs([
     "🟢 COMSOL LTNE: Solid Sub-Node", 
     "🟠 COMSOL Solid Matrix (Scaled by [1-φ])",
-    tab3_label
+    tab3_header
 ])
 
 with tab1:
@@ -391,13 +345,13 @@ with tab3:
     if is_deadman:
         st.info(f"💡 **Multiphase Pore Fluid Mixture evaluated at T = {temperature_k:.1f} K** (Gas + Liquid Iron + Liquid Slag).")
     else:
-        st.info(f"💡 **Gas Phase Pore Fluid evaluated at T = {temperature_k:.1f} K** (Single-Phase Gas Flow in Granular Bed).")
+        st.info(f"💡 **Single-Phase Pore Gas evaluated at T = {temperature_k:.1f} K** (Pure Gas Phase, $s_{{gas}} = 1.0$).")
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Fluid Density ρ_fluid(T)", f"{fluid_state['rho']:.3f} kg/m³")
     col2.metric("Fluid Specific Heat Cp_fluid(T)", f"{fluid_state['cp']:.2f} J/(kg·K)")
     col3.metric("Fluid Conductivity k_fluid(T)", f"{fluid_state['k']:.4f} W/(m·K)")
-    col4.metric("Fluid Viscosity μ_fluid(T)", f"{fluid_state['mu']:.4f} Pa·s")
+    col4.metric("Fluid Viscosity μ_fluid(T)", f"{fluid_state['mu']:.4e} Pa·s")
 
     st.markdown("#### Dimensionless Numbers & Interphase Coupling")
     dcol1, dcol2, dcol3 = st.columns(3)
@@ -405,91 +359,74 @@ with tab3:
     dcol2.metric("Prandtl Number Pr(T)", f"{Pr:.3f}")
     dcol3.metric("Nusselt Number Nu(T)", f"{Nu:.2f}")
 
-    st.markdown("#### Analytical Formulations in Pores")
+    st.markdown("#### Analytical Fluid Formulations in Pores")
     if is_deadman:
         st.latex(r"\rho_{fluid}(T) = s_{gas}\rho_g(T) + s_{iron}\rho_{iron}(T) + s_{slag}\rho_{slag}(T)")
         st.latex(r"C_{p,fluid}(T) = s_{gas}C_{p,g}(T) + s_{iron}C_{p,iron}(T) + s_{slag}C_{p,slag}(T)")
         st.latex(r"k_{fluid}(T) = s_{gas}k_g(T) + s_{iron}k_{iron}(T) + s_{slag}k_{slag}(T)")
     else:
-        st.latex(r"\rho_{fluid}(T) = \rho_g(T) = A + B\cdot T + C\cdot T^2 + D\cdot T^3")
-        st.latex(r"C_{p,fluid}(T) = C_{p,g}(T) = A + B\cdot T + C\cdot T^2 + D\cdot T^3")
-        st.latex(r"k_{fluid}(T) = k_g(T) = A + B\cdot T + C\cdot T^2 + D\cdot T^3")
+        st.latex(rf"\rho_g(T) = {rhog_A:.4f} + ({rhog_B:.4e})T + ({rhog_C:.4e})T^2 + ({rhog_D:.4e})T^3")
+        st.latex(rf"C_{{p,g}}(T) = {cpg_A:.4f} + ({cpg_B:.4e})T + ({cpg_C:.4e})T^2 + ({cpg_D:.4e})T^3")
+        st.latex(rf"k_g(T) = {kg_A:.4f} + ({kg_B:.4e})T + ({kg_C:.4e})T^2 + ({kg_D:.4e})T^3")
+        st.latex(rf"\mu_g(T) = {mu_A:.4e} + ({mu_B:.4e})T + ({mu_C:.4e})T^2 + ({mu_D:.4e})T^3")
 
 # --- COMSOL Text Export Content Generator ---
-scale_fac = 1.0 - phi
-p_str = f"{phi:.4f}"
-cpa_s, cpb_s, cpc_s = f"{cp_A:.6f}", f"{cp_B:.6e}", f"{cp_C:.6e}"
-ksa_s, ksb_s, ksc_s = f"{ks_A:.6f}", f"{ks_B:.6e}", f"{ks_C:.6e}"
+gas_export_text = f"""--------------------------------------------------------------------
+2. SINGLE-PHASE PORE GAS PROPERTIES (GRANULAR DRY BURDEN)
+--------------------------------------------------------------------
+[Gas Analytical Function Expressions in Pores]
+rho_g(T)  = {rhog_A:.6f} + ({rhog_B:.6e})*T + ({rhog_C:.6e})*T^2 + ({rhog_D:.6e})*T^3
+Cp_g(T)   = {cpg_A:.6f} + ({cpg_B:.6e})*T + ({cpg_C:.6e})*T^2 + ({cpg_D:.6e})*T^3
+k_g(T)    = {kg_A:.6f} + ({kg_B:.6e})*T + ({kg_C:.6e})*T^2 + ({kg_D:.6e})*T^3
+mu_g(T)   = {mu_A:.6e} + ({mu_B:.6e})*T + ({mu_C:.6e})*T^2 + ({mu_D:.6e})*T^3
+"""
 
-exp_cp = f"(1 - {p_str}) * ({cpa_s} + ({cpb_s})*T + ({cpc_s})*T^(-2))"
-exp_ks = f"(1 - {p_str}) * ({ksa_s} + ({ksb_s})*T + ({ksc_s})*T^2)"
+deadman_export_text = f"""--------------------------------------------------------------------
+2. DEADMAN ZONE MULTIPHASE PORE FLUID MIXTURE (COMSOL)
+--------------------------------------------------------------------
+Gas Saturation (s_gas)   = {s_gas:.4f}
+Iron Saturation (s_iron) = {s_iron:.4f}
+Slag Saturation (s_slag) = {s_slag:.4f}
 
-if is_deadman:
-    sg_s = f"{s_gas:.4f}"
-    si_s = f"{s_iron:.4f}"
-    ss_s = f"{s_slag:.4f}"
-    mi_s = f"{mu_iron:.4f}"
-    ms_s = f"{mu_slag:.4f}"
-    
-    fluid_lines = [
-        "--------------------------------------------------",
-        "2. DEADMAN ZONE MULTIPHASE PORE FLUID (COMSOL)",
-        "--------------------------------------------------",
-        "Gas Saturation (s_gas)   = " + sg_s,
-        "Iron Saturation (s_iron) = " + si_s,
-        "Slag Saturation (s_slag) = " + ss_s,
-        "",
-        "[Mixture Fluid Property Expressions in Pores]",
-        "rho_fluid(T) = " + sg_s + "*rho_g(T) + " + si_s + "*rho_iron(T) + " + ss_s + "*rho_slag(T)",
-        "Cp_fluid(T)  = " + sg_s + "*Cp_g(T) + " + si_s + "*Cp_iron(T) + " + ss_s + "*Cp_slag(T)",
-        "k_fluid(T)   = " + sg_s + "*k_g(T) + " + si_s + "*k_iron(T) + " + ss_s + "*k_slag(T)",
-        "mu_fluid(T)  = " + sg_s + "*mu_g(T) + " + si_s + "*" + mi_s + " + " + ss_s + "*" + ms_s
-    ]]
-    fluid_export_text = "\n".join(fluid_lines)
-else:
-    fluid_lines = [
-        "--------------------------------------------------",
-        "2. GRANULAR ZONE PORE FLUID (PURE GAS PHASE)",
-        "--------------------------------------------------",
-        "Gas Saturation (s_gas)   = 1.0000",
-        "",
-        "[Pure Gas Property Expressions in Pores]",
-        "rho_fluid(T) = rho_g(T)",
-        "Cp_fluid(T)  = Cp_g(T)",
-        "k_fluid(T)   = k_g(T)",
-        "mu_fluid(T)  = mu_g(T)"
-    ]
-    fluid_export_text = "\n".join(fluid_lines)
+[Gas Component Analytic Functions]
+rho_g(T)  = {rhog_A:.6f} + ({rhog_B:.6e})*T + ({rhog_C:.6e})*T^2 + ({rhog_D:.6e})*T^3
+Cp_g(T)   = {cpg_A:.6f} + ({cpg_B:.6e})*T + ({cpg_C:.6e})*T^2 + ({cpg_D:.6e})*T^3
+k_g(T)    = {kg_A:.6f} + ({kg_B:.6e})*T + ({kg_C:.6e})*T^2 + ({kg_D:.6e})*T^3
+mu_g(T)   = {mu_A:.6e} + ({mu_B:.6e})*T + ({mu_C:.6e})*T^2 + ({mu_D:.6e})*T^3
 
-zone_prefix = "Deadman" if is_deadman else "Granular"
+[Mixture Fluid Property Expressions in Pores]
+rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)
+Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)
+k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)
+mu_fluid(T)  = {s_gas:.4f}*mu_g(T) + {s_iron:.4f}*{mu_iron:.4f} + {s_slag:.4f}*{mu_slag:.4f}
+"""
 
-export_lines = [
-    "==================================================",
-    "BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)",
-    "Operating Zone: " + str(bf_zone),
-    "Ref Temp: " + f"{temperature_k:.2f}" + " K | Porosity: " + p_str,
-    "==================================================",
-    "",
-    "--------------------------------------------------",
-    "1. SOLID MATRIX SCALED PROPERTIES",
-    "--------------------------------------------------",
-    "Porosity (phi) = " + p_str,
-    "Scaling Factor = (1 - phi) = " + f"{scale_fac:.4f}",
-    "",
-    "[Analytic Function: Scaled Solid Specific Heat Cp_eff(T)]",
-    "Expression: " + exp_cp,
-    "",
-    "[Analytic Function: Scaled Solid Thermal Conductivity k_eff(T)]",
-    "Expression: " + exp_ks,
-    "",
-    fluid_export_text,
-    "=================================================="
-]
-comsol_text = "\n".join(export_lines)
+fluid_section_text = deadman_export_text if is_deadman else gas_export_text
+
+comsol_text = f"""====================================================================
+BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)
+Operating Zone: {bf_zone}
+Evaluated at Reference Temp: {temperature_k:.2f} K | Total Porosity (phi): {phi:.4f}
+====================================================================
+
+--------------------------------------------------------------------
+1. SOLID MATRIX SCALED PROPERTIES (Cp and k scaled by [1 - phi], no density)
+--------------------------------------------------------------------
+Porosity (phi) = {phi:.4f}
+Scaling Factor = (1 - phi) = {(1.0 - phi):.4f}
+
+[Analytic Function: Scaled Solid Specific Heat Cp_eff(T)]
+Expression: (1 - {phi:.4f}) * ({cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2))
+
+[Analytic Function: Scaled Solid Thermal Conductivity k_eff(T)]
+Expression: (1 - {phi:.4f}) * ({ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2)
+
+{fluid_section_text}====================================================================
+"""
 
 st.download_button(
     label="📥 Download Temperature-Dependent COMSOL Variables (.txt)",
     data=comsol_text,
-    file_name="COMSOL_BF_" + zone_prefix + "_Functions.txt",
+    file_name=f"COMSOL_BF_{bf_zone.split()[0]}_Thermophysical_Functions.txt",
     mime="text/plain"
 )
