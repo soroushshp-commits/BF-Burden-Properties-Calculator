@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import io
 
 # Page Configuration
 st.set_page_config(
@@ -12,12 +13,12 @@ st.set_page_config(
 )
 
 st.title("🔥 Blast Furnace Multi-Zone Thermophysical & Hydrodynamic Simulator")
-st.markdown("""
+st.markdown(r"""
 **Model Architecture Features:** 
 * **Solid Matrix Scaling:** $C_{p,s}$ and $k_s$ scaled by $(1 - \phi_{\text{eff}})$ for LTNE/Non-LTNE COMSOL domains.
 * **Hydrodynamics Engine:** Calculates harmonic mean particle diameter $d_{p,\text{eff}}$, intrinsic permeability $K$, Forchheimer drag $\beta_F$, and Ergun/Brinkman pressure drop profiles ($\Delta P/L$).
-* **Reynolds Number Conversion Engine:** Computes modified Ergun Reynolds number ($Re_m$) and explicitly converts to superficial particle Reynolds number ($Re_p$) for the Wakao-Kaguei heat transfer correlation.
-* **Deadman Liquid Holdup Physics:** Isolates pure gas phase transport properties ($\rho_g, \mu_g, k_g, C_{p,g}$) while treating liquid holdup ($s_{\text{iron}}, s_{\text{slag}}$) as effective porosity reduction ($\phi_{\text{eff}}$).
+* **Tuyere Pressure & Blast Velocity:** Integrates Tuyere inlet pressure ($P_{\text{tuyere}}$), top pressure ($P_{\text{top}}$), blast flow rates, and pressure-corrected gas density $\rho_g(T, P)$.
+* **COMSOL Multiphysics Export Engine:** Direct generation of unit-formatted expressions ready for COMSOL Global Definitions / Variables import.
 * **2D & 3D Spatial Analytics:** Interactive 2D contours and 3D surface meshes (`go.Surface`) with live camera elevation, azimuth, and distance controls.
 * **Dynamic Temperature Sweeps:** Multi-tab visual analytics across temperatures from 273.15 K to 2000 K.
 """)
@@ -88,13 +89,13 @@ for mat in active_mats:
         volumes[mat] = v
         
         st.divider()
-        st.markdown(f"**$C_p$ Coefficients** ($A + B\\cdot T + C\\cdot T^{{-2}}$)")
+        st.markdown(r"**$C_p$ Coefficients** ($A + B\cdot T + C\cdot T^{-2}$)")
         col_cpa, col_cpb, col_cpc = st.columns(3)
         cpa = col_cpa.number_input("A", value=float(default_materials[mat]['cpa']), key=f"{mat}_cpa")
         cpb = col_cpb.number_input("B", value=float(default_materials[mat]['cpb']), key=f"{mat}_cpb")
         cpc = col_cpc.number_input("C", value=float(default_materials[mat]['cpc']), key=f"{mat}_cpc")
         
-        st.markdown(f"**$k$ Coefficients** ($A + B\\cdot T + C\\cdot T^2$)")
+        st.markdown(r"**$k$ Coefficients** ($A + B\cdot T + C\cdot T^2$)")
         col_ka, col_kb, col_kc = st.columns(3)
         ka = col_ka.number_input("A", value=float(default_materials[mat]['ka']), key=f"{mat}_ka")
         kb = col_kb.number_input("B", value=float(default_materials[mat]['kb']), key=f"{mat}_kb")
@@ -153,14 +154,32 @@ if is_deadman:
         k_slag_A = col_ks1.number_input("k_slag A", value=3.5, key="ks_a")
         k_slag_B = col_ks2.number_input("k_slag B", value=0.0, key="ks_b")
 
-# --- Sidebar: Gas Flow & Bed Geometry ---
-st.sidebar.header("💨 Flow Parameters & Bed Geometry")
+# --- Sidebar: Gas Flow, Pressure & Tuyere Hydrodynamics ---
+st.sidebar.header("💨 Flow Parameters & Tuyere Hydraulics")
 temperature_k = paired_input("Bed Temp (K)", 273.15, 2000.0, 1600.0 if is_deadman else 1000.0, 10.0, "temp_k", fmt="%.1f")
-vg = paired_input("Superficial Gas Velocity (m/s)", 0.1, 5.0, 1.5, 0.1, "vg_val")
+vg = paired_input("Bed Superficial Gas Velocity (m/s)", 0.1, 5.0, 1.5, 0.1, "vg_val")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🔥 Tuyere & Bed Pressure Configuration**")
+p_tuyere_kPa = paired_input("Tuyere Inlet Pressure (kPa abs)", 100.0, 600.0, 350.0, 10.0, "p_tuyere", fmt="%.1f")
+p_top_kPa = paired_input("Top Gas Pressure (kPa abs)", 100.0, 300.0, 150.0, 5.0, "p_top", fmt="%.1f")
+
+with st.sidebar.expander("💨 Tuyere Geometry & Blast Velocity Calculator", expanded=False):
+    num_tuyeres = st.number_input("Number of Tuyeres", value=32, step=1, key="num_tuyeres")
+    d_tuyere_cm = st.number_input("Tuyere Inner Diameter (cm)", value=15.0, step=0.5, key="d_tuyere")
+    q_blast_nm3min = st.number_input("Total Blast Flow Rate (Nm³/min)", value=6000.0, step=100.0, key="q_blast")
+    
+    # Calculate blast velocity at tuyere nose
+    a_single_tuyere = np.pi * ((d_tuyere_cm / 100.0) / 2.0) ** 2
+    a_total_tuyeres = a_single_tuyere * num_tuyeres
+    q_blast_m3s_actual = (q_blast_nm3min / 60.0) * (101.325 / p_tuyere_kPa) * (2000.0 / 273.15) # scaled to blast temperature (~2000K flame)
+    v_tuyere_actual = q_blast_m3s_actual / a_total_tuyeres if a_total_tuyeres > 0 else 0.0
+    st.info(f"**Calculated Tuyere Nose Velocity:** `{v_tuyere_actual:.1f} m/s`")
+
 bed_height = paired_input("Bed Height L (m)", 0.5, 35.0, 10.0, 0.5, "bed_h", fmt="%.1f")
 bed_radius = paired_input("Bed Radius R (m)", 1.0, 10.0, 4.0, 0.5, "bed_r", fmt="%.1f")
 
-with st.sidebar.expander("Gas Density ρ_g ($A + BT + CT^2 + DT^3$)", expanded=False):
+with st.sidebar.expander("Gas Density ρ_g_std ($A + BT + CT^2 + DT^3$ @ 1 atm)", expanded=False):
     rhog_A = st.number_input("ρ_g A", value=0.95, format="%.3f", key="rhog_a")
     rhog_B = st.number_input("ρ_g B", value=-7.50e-4, format="%.2e", key="rhog_b")
     rhog_C = st.number_input("ρ_g C", value=2.50e-7, format="%.2e", key="rhog_c")
@@ -193,7 +212,7 @@ weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials
 phi = weighted_void_sum / total_volume
 
 # --- Physics Calculation Engine ---
-def calculate_physics(T):
+def calculate_physics(T, P_kPa=p_tuyere_kPa):
     # 1. Solid Mixture Effective Properties
     cp_s, ks_s, rho_s = 0.0, 0.0, 0.0
     cp_A, cp_B, cp_C = 0.0, 0.0, 0.0
@@ -233,8 +252,10 @@ def calculate_physics(T):
     cp_s_eff = cp_s * (1.0 - phi_eff)
     ks_s_eff = ks_s * (1.0 - phi_eff)
 
-    # 3. Pure Gas Transport Properties
-    rho_g = rhog_A + rhog_B * T + rhog_C * (T ** 2) + rhog_D * (T ** 3)
+    # 3. Gas Transport Properties with Ideal Gas Pressure Correction
+    rho_g_std = rhog_A + rhog_B * T + rhog_C * (T ** 2) + rhog_D * (T ** 3)
+    rho_g = rho_g_std * (P_kPa / 101.325) # Ideal gas pressure scaling relative to 1 atm
+    
     mu_g = mu_A + mu_B * T + mu_C * (T ** 2) + mu_D * (T ** 3)
     cp_g = cpg_A + cpg_B * T + cpg_C * (T ** 2) + cpg_D * (T ** 3)
     kg = kg_A + kg_B * T + kg_C * (T ** 2) + kg_D * (T ** 3)
@@ -273,7 +294,8 @@ def calculate_physics(T):
         'dp_eff': dp_eff, 'r_eff': r_eff, 'Re_m': Re_m, 'Re_p': Re_p,
         'K_perm': K_perm, 'beta_F': beta_F,
         'dp_viscous_Pa_m': dp_viscous_Pa_m, 'dp_inertial_Pa_m': dp_inertial_Pa_m,
-        'dp_total_Pa_m': dp_total_Pa_m, 'delta_p_total_kPa': delta_p_total_kPa
+        'dp_total_Pa_m': dp_total_Pa_m, 'delta_p_total_kPa': delta_p_total_kPa,
+        'phi_eff': phi_eff
     }
     
     coeffs = {
@@ -283,7 +305,7 @@ def calculate_physics(T):
     }
     return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (Re_m, Re_p, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state), hydro_state, coeffs
 
-(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), fluid_interphase, hydro_state, coeffs = calculate_physics(temperature_k)
+(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), fluid_interphase, hydro_state, coeffs = calculate_physics(temperature_k, p_tuyere_kPa)
 Re_m, Re_p, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state = fluid_interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
@@ -317,14 +339,15 @@ r_vec = np.linspace(-bed_radius, bed_radius, 60)
 z_vec = np.linspace(0, bed_height, 60)
 R_grid, Z_grid = np.meshgrid(r_vec, z_vec)
 
-# 2D Analytical Fields
+# 2D Analytical Fields incorporating local pressure drop P(z)
 Z_norm = Z_grid / bed_height
 R_norm = R_grid / bed_radius
+P_2D_kPa = p_tuyere_kPa - (p_tuyere_kPa - p_top_kPa) * Z_norm
 T_2D = t_top + (t_bottom - t_top) * (Z_norm ** 0.85) * (1.0 + radial_c_bias * np.exp(-4.0 * (R_norm ** 2)))
 V_2D = vg * (1.0 + radial_c_bias * np.exp(-3.0 * (R_norm ** 2)) + wall_porosity_bias * (R_norm ** 4)) * (T_2D / temperature_k) ** 0.5
 
 K_perm_val = max(hydro_state['K_perm'], 1e-12)
-DP_2D = ((fluid_state['mu'] / K_perm_val) * V_2D + hydro_state['beta_F'] * fluid_state['rho'] * (V_2D ** 2)) / 1000.0
+DP_2D = ((fluid_state['mu'] / K_perm_val) * V_2D + hydro_state['beta_F'] * (fluid_state['rho'] * (P_2D_kPa / p_tuyere_kPa)) * (V_2D ** 2)) / 1000.0
 
 tab_map_T, tab_map_V, tab_map_DP, tab_3d_T, tab_3d_V = st.tabs([
     "🔥 2D Temperature Contour", 
@@ -420,7 +443,7 @@ T_sweep = np.linspace(273.15, 2000.0, 100)
 sweep_records = []
 
 for T_i in T_sweep:
-    (cp_s_i, ks_s_i, rho_s_i, rho_bulk_i), (cp_s_eff_i, ks_s_eff_i), (Re_m_i, Re_p_i, Pr_i, Nu_i, h_sf_i, a_sf_i, q_sf_coeff_i, fluid_state_i), hydro_state_i, _ = calculate_physics(T_i)
+    (cp_s_i, ks_s_i, rho_s_i, rho_bulk_i), (cp_s_eff_i, ks_s_eff_i), (Re_m_i, Re_p_i, Pr_i, Nu_i, h_sf_i, a_sf_i, q_sf_coeff_i, fluid_state_i), hydro_state_i, _ = calculate_physics(T_i, p_tuyere_kPa)
     sweep_records.append({
         "Temperature (K)": T_i,
         "Cp Solid (Intrinsic)": cp_s_i,
@@ -523,3 +546,62 @@ with sweep_tab6:
     )
     fig_dp.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     st.plotly_chart(fig_dp, use_container_width=True)
+
+# --- COMSOL Multiphysics Model Export Engine ---
+st.markdown("---")
+st.subheader("⚡ COMSOL Multiphysics Model Export Engine")
+st.markdown("""
+Copy expressions directly into your COMSOL Multiphysics model under **Global Definitions -> Parameters** or **Component -> Definitions -> Variables**.
+""")
+
+# Construct COMSOL parameter expressions
+phi_eff_val = hydro_state['phi_eff']
+dp_eff_val = hydro_state['dp_eff']
+rhog_A, rhog_B, rhog_C, rhog_D = coeffs['rhog']
+mu_A, mu_B, mu_C, mu_D = coeffs['mu']
+
+comsol_data = [
+    {"Name": "phi_eff", "Expression": f"{phi_eff_val:.4f}", "Unit": "1", "Description": "Effective bed porosity accounting for liquid holdup"},
+    {"Name": "dp_eff", "Expression": f"{dp_eff_val:.5f}[m]", "Unit": "m", "Description": "Effective harmonic mean particle diameter"},
+    {"Name": "rho_s", "Expression": f"{rho_s:.2f}[kg/m^3]", "Unit": "kg/m^3", "Description": "Solid matrix true density"},
+    {"Name": "Cp_s", "Expression": f"({cp_A:.3f} + {cp_B:.4e}*T + {cp_C:.4e}/(T^2))[J/(kg*K)]", "Unit": "J/(kg*K)", "Description": "Intrinsic solid specific heat capacity"},
+    {"Name": "Cp_s_eff", "Expression": f"Cp_s * (1 - {phi_eff_val:.4f})", "Unit": "J/(kg*K)", "Description": "LTNE scaled solid specific heat capacity"},
+    {"Name": "k_s", "Expression": f"({ks_A:.3f} + {ks_B:.4e}*T + {ks_C:.4e}*(T^2))[W/(m*K)]", "Unit": "W/(m*K)", "Description": "Intrinsic solid thermal conductivity"},
+    {"Name": "k_s_eff", "Expression": f"k_s * (1 - {phi_eff_val:.4f})", "Unit": "W/(m*K)", "Description": "LTNE scaled solid thermal conductivity"},
+    {"Name": "rho_g", "Expression": f"({rhog_A:.3f} + {rhog_B:.4e}*T + {rhog_C:.4e}*(T^2)) * (p/(101.325[kPa]))[kg/m^3]", "Unit": "kg/m^3", "Description": "Pressure-corrected ideal gas density"},
+    {"Name": "mu_g", "Expression": f"({mu_A:.4e} + {mu_B:.4e}*T)[Pa*s]", "Unit": "Pa*s", "Description": "Gas dynamic viscosity"},
+    {"Name": "K_perm", "Expression": f"((phi_eff^3) * (dp_eff^2)) / (150 * ((1 - phi_eff)^2))", "Unit": "m^2", "Description": "Intrinsic bed permeability (Ergun)"},
+    {"Name": "beta_F", "Expression": f"(1.75 * (1 - phi_eff)) / ((phi_eff^3) * dp_eff)", "Unit": "1/m", "Description": "Forchheimer non-Darcy drag coefficient"},
+    {"Name": "a_sf", "Expression": f"(6 * (1 - phi_eff)) / dp_eff", "Unit": "1/m", "Description": "Interphase specific surface area"},
+    {"Name": "h_sf", "Expression": f"({h_sf:.2f})[W/(m^2*K)]", "Unit": "W/(m^2*K)", "Description": "Interphase heat transfer coefficient (Wakao-Kaguei)"},
+    {"Name": "q_sf", "Expression": f"h_sf * a_sf", "Unit": "W/(m^3*K)", "Description": "Volumetric interphase thermal coupling coefficient"},
+    {"Name": "P_tuyere", "Expression": f"{p_tuyere_kPa:.1f}[kPa]", "Unit": "kPa", "Description": "Tuyere blast inlet pressure"},
+    {"Name": "P_top", "Expression": f"{p_top_kPa:.1f}[kPa]", "Unit": "kPa", "Description": "Top gas exit pressure"}
+]
+
+df_comsol = pd.DataFrame(comsol_data)
+
+# Display COMSOL Table
+st.dataframe(df_comsol, use_container_width=True, hide_index=True)
+
+# Generate downloadable CSV formatted for COMSOL Parameter Import
+csv_buffer = io.StringIO()
+df_comsol.to_csv(csv_buffer, index=False)
+
+st.download_button(
+    label="📥 Download COMSOL Parameters File (.csv)",
+    data=csv_buffer.getvalue(),
+    file_name="comsol_blast_furnace_parameters.csv",
+    mime="text/csv"
+)
+
+st.code("""
+% COMSOL Multiphysics Variable Snippet (Copy-Paste directly into COMSOL Definitions)
+phi_eff   = " + f"{phi_eff_val:.4f}" + "
+dp_eff    = " + f"{dp_eff_val:.5f}[m]" + "
+K_perm    = ((phi_eff^3)*(dp_eff^2))/(150*((1-phi_eff)^2))
+beta_F    = (1.75*(1-phi_eff))/((phi_eff^3)*dp_eff)
+rho_g     = (" + f"{rhog_A:.3f} + {rhog_B:.4e}*T + {rhog_C:.4e}*T^2" + ")*(p/101325[Pa])
+mu_g      = " + f"{mu_A:.4e} + {mu_B:.4e}*T" + "
+q_sf      = h_sf * a_sf
+""", language="text")
