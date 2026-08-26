@@ -1,20 +1,25 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 # Page Configuration
 st.set_page_config(
-    page_title="Blast Furnace Burden Thermophysical Simulator",
+    page_title="Blast Furnace Burden Thermophysical & Hydrodynamic Simulator",
     page_icon="🔥",
     layout="wide"
 )
 
-st.title("🔥 Blast Furnace Multi-Zone Thermophysical Simulator (Multiphase Pore Fluid & Coke Skeleton)")
+st.title("🔥 Blast Furnace Multi-Zone Thermophysical & Hydrodynamic Simulator")
 st.markdown("""
-**Model Architecture Updates:** 
-* **Solid Matrix Scaling:** $C_{p,s}$ and $k_s$ are multiplied strictly by $(1 - \phi)$ without density ($\rho$) coupling.
-* **Zone-Aware Pore Fluid:** Single-phase gas formulations in dry burden zones; direct saturation-weighted averages ($s_{gas}, s_{iron}, s_{slag}$) in the Deadman zone.
-* **Burden Visualization:** Interactive Mass vs. Volume distribution charts.
+**Model Architecture Features:** 
+* **Solid Matrix Scaling:** $C_{p,s}$ and $k_s$ scaled by $(1 - \phi_{\text{eff}})$ for LTNE/Non-LTNE COMSOL domains.
+* **Hydrodynamics Engine:** Calculates harmonic mean particle diameter $d_{p,\text{eff}}$, intrinsic permeability $K$, Forchheimer drag $\beta_F$, and Ergun/Brinkman pressure drop profiles ($\Delta P/L$).
+* **Reynolds Number Conversion Engine:** Computes modified Ergun Reynolds number ($Re_m$) and explicitly converts to superficial particle Reynolds number ($Re_p$) for the Wakao-Kaguei heat transfer correlation.
+* **Deadman Liquid Holdup Physics:** Isolates pure gas phase transport properties ($\rho_g, \mu_g, k_g, C_{p,g}$) while treating liquid holdup ($s_{\text{iron}}, s_{\text{slag}}$) as effective porosity reduction ($\phi_{\text{eff}}$).
+* **2D & 3D Spatial Analytics:** Interactive 2D contours and 3D surface meshes (`go.Surface`) with live camera elevation, azimuth, and distance controls.
+* **Dynamic Temperature Sweeps:** Multi-tab visual analytics across temperatures from 273.15 K to 2000 K.
 """)
 
 # --- Helper Function: Synchronized Input ---
@@ -54,7 +59,7 @@ st.sidebar.header("🗺️ Blast Furnace Region")
 bf_zone = st.sidebar.radio("Select Operating Zone", ["Granular Zone (Dry Burden Mix)", "Deadman / Lower Coke Zone (Coke + Melts)"])
 is_deadman = "Deadman" in bf_zone
 
-# --- Sidebar: Material Properties ---
+# --- Sidebar: Material Database & Particle Sizes ---
 st.sidebar.header("🛠️ Material Database & Particle Sizes")
 
 default_materials = {
@@ -103,7 +108,7 @@ for mat in ['sinter', 'pellet', 'lump']:
         volumes[mat] = 0.0
         materials[mat] = materials.get(mat, {'true_density': 1.0, 'bulk_density': 1.0, 'dp': 0.02, 'cp_coeffs': (0,0,0), 'k_coeffs': (0,0,0)})
 
-# --- Sidebar: Liquid Melts Holdup & Temperature Coefficients ---
+# --- Sidebar: Liquid Melts Holdup (Deadman Only) ---
 s_iron, mu_iron = 0.0, 0.005
 rho_iron_A, rho_iron_B = 7000.0, -0.5
 cp_iron_A, cp_iron_B = 800.0, 0.05
@@ -148,10 +153,12 @@ if is_deadman:
         k_slag_A = col_ks1.number_input("k_slag A", value=3.5, key="ks_a")
         k_slag_B = col_ks2.number_input("k_slag B", value=0.0, key="ks_b")
 
-# --- Advanced Settings (Gas Flow & Temperature-Dependent Polynomials) ---
-st.sidebar.header("💨 Gas Flow Properties & Polynomials")
+# --- Sidebar: Gas Flow & Bed Geometry ---
+st.sidebar.header("💨 Flow Parameters & Bed Geometry")
 temperature_k = paired_input("Bed Temp (K)", 273.15, 2000.0, 1600.0 if is_deadman else 1000.0, 10.0, "temp_k", fmt="%.1f")
 vg = paired_input("Superficial Gas Velocity (m/s)", 0.1, 5.0, 1.5, 0.1, "vg_val")
+bed_height = paired_input("Bed Height L (m)", 0.5, 35.0, 10.0, 0.5, "bed_h", fmt="%.1f")
+bed_radius = paired_input("Bed Radius R (m)", 1.0, 10.0, 4.0, 0.5, "bed_r", fmt="%.1f")
 
 with st.sidebar.expander("Gas Density ρ_g ($A + BT + CT^2 + DT^3$)", expanded=False):
     rhog_A = st.number_input("ρ_g A", value=0.95, format="%.3f", key="rhog_a")
@@ -177,7 +184,7 @@ with st.sidebar.expander("Gas Thermal Conductivity k_g ($A + BT + CT^2 + DT^3$)"
     kg_C = st.number_input("kg C", value=0.0, format="%.2e", key="kg_c")
     kg_D = st.number_input("kg D", value=0.0, format="%.2e", key="kg_d")
 
-# --- Void Fraction & Mass Fractions Calculations ---
+# --- Void Fraction & Mass Fraction Calculations ---
 total_volume = sum(volumes.values()) or 1.0
 total_mass = sum(masses.values()) or 1.0
 mass_fractions = {mat: m / total_mass for mat, m in masses.items()}
@@ -185,48 +192,9 @@ mass_fractions = {mat: m / total_mass for mat, m in masses.items()}
 weighted_void_sum = sum(vol * (1.0 - (materials[mat]['bulk_density'] / materials[mat]['true_density'])) for mat, vol in volumes.items() if materials[mat]['true_density'] > 0)
 phi = weighted_void_sum / total_volume
 
-# Pore phase saturations
-if is_deadman:
-    s_liquid_total = s_iron + s_slag
-    s_gas = max(0.0, 1.0 - s_liquid_total)
-else:
-    s_gas = 1.0
-    s_iron = 0.0
-    s_slag = 0.0
-
-# --- Burden Visualization ---
-st.markdown("---")
-st.subheader("🧱 Burden Composition (Solid Matrix)")
-
-df_burden = pd.DataFrame({
-    "Material": [m.capitalize() for m in active_mats],
-    "Mass (kg)": [masses[m] for m in active_mats],
-    "Volume (m³)": [volumes[m] for m in active_mats]
-})
-
-col_mass, col_vol = st.columns(2)
-color_map = {"Coke": "#4A4A4A", "Sinter": "#D2691E", "Pellet": "#A0522D", "Lump": "#8B4513"}
-
-with col_mass:
-    fig_mass = px.pie(
-        df_burden, values='Mass (kg)', names='Material', 
-        title="Mass Distribution", hole=0.4,
-        color='Material', color_discrete_map=color_map
-    )
-    fig_mass.update_layout(margin=dict(t=40, b=0, l=0, r=0))
-    st.plotly_chart(fig_mass, use_container_width=True)
-
-with col_vol:
-    fig_vol = px.pie(
-        df_burden, values='Volume (m³)', names='Material', 
-        title="Volume Distribution", hole=0.4,
-        color='Material', color_discrete_map=color_map
-    )
-    fig_vol.update_layout(margin=dict(t=40, b=0, l=0, r=0))
-    st.plotly_chart(fig_vol, use_container_width=True)
-
 # --- Physics Calculation Engine ---
 def calculate_physics(T):
+    # 1. Solid Mixture Effective Properties
     cp_s, ks_s, rho_s = 0.0, 0.0, 0.0
     cp_A, cp_B, cp_C = 0.0, 0.0, 0.0
     ks_A, ks_B, ks_C = 0.0, 0.0, 0.0
@@ -249,184 +217,309 @@ def calculate_physics(T):
 
     rho_bulk = total_mass / total_volume if total_volume > 0 else 0.0
 
-    cp_s_eff = cp_s * (1.0 - phi)
-    ks_s_eff = ks_s * (1.0 - phi)
-
+    # Harmonic mean particle diameter for multi-component burden
     inv_dp_sum = sum(vol_fracs[m] / materials[m]['dp'] for m in vol_fracs if materials[m]['dp'] > 0)
     dp_eff = (1.0 / inv_dp_sum) if inv_dp_sum > 0 else 0.025
+    r_eff = dp_eff / 2.0
 
+    # 2. Effective Voidage (Accounting for Liquid Holdup in Deadman)
+    if is_deadman:
+        s_gas = max(0.01, 1.0 - (s_iron + s_slag))
+        phi_eff = phi * s_gas
+    else:
+        s_gas = 1.0
+        phi_eff = phi
+
+    cp_s_eff = cp_s * (1.0 - phi_eff)
+    ks_s_eff = ks_s * (1.0 - phi_eff)
+
+    # 3. Pure Gas Transport Properties
     rho_g = rhog_A + rhog_B * T + rhog_C * (T ** 2) + rhog_D * (T ** 3)
     mu_g = mu_A + mu_B * T + mu_C * (T ** 2) + mu_D * (T ** 3)
     cp_g = cpg_A + cpg_B * T + cpg_C * (T ** 2) + cpg_D * (T ** 3)
     kg = kg_A + kg_B * T + kg_C * (T ** 2) + kg_D * (T ** 3)
 
-    rho_iron = rho_iron_A + rho_iron_B * T
-    cp_iron = cp_iron_A + cp_iron_B * T
-    k_iron = k_iron_A + k_iron_B * T
-
-    rho_slag = rho_slag_A + rho_slag_B * T
-    cp_slag = cp_slag_A + cp_slag_B * T
-    k_slag = k_slag_A + k_slag_B * T
-
-    if is_deadman:
-        rho_fluid = (s_gas * rho_g) + (s_iron * rho_iron) + (s_slag * rho_slag)
-        cp_fluid = (s_gas * cp_g) + (s_iron * cp_iron) + (s_slag * cp_slag)
-        k_fluid = (s_gas * kg) + (s_iron * k_iron) + (s_slag * k_slag)
-        mu_fluid = (s_gas * mu_g) + (s_iron * mu_iron) + (s_slag * mu_slag)
+    # 4. Modified Reynolds Number (Re_m) & Explicit Conversion to Superficial (Re_p)
+    if (1.0 - phi_eff) > 0 and mu_g > 0:
+        Re_m = (rho_g * vg * dp_eff) / ((1.0 - phi_eff) * mu_g)
     else:
-        rho_fluid = rho_g
-        cp_fluid = cp_g
-        k_fluid = kg
-        mu_fluid = mu_g
+        Re_m = 0.0
 
-    Re = (rho_fluid * vg * dp_eff) / mu_fluid if mu_fluid > 0 else 0
-    Pr = (cp_fluid * mu_fluid) / k_fluid if k_fluid > 0 else 0
-    Nu = 2.0 + 1.1 * (Pr ** (1/3)) * (Re ** 0.6)
+    # Explicit transformation step back to superficial Re_p for Wakao-Kaguei evaluation
+    Re_p = Re_m * (1.0 - phi_eff)
+
+    # 5. Interphase Heat Transfer Coefficients (Wakao & Kaguei, 1982)
+    Pr = (cp_g * mu_g) / kg if kg > 0 else 0.0
+    Nu = 2.0 + 1.1 * (Pr ** (1/3)) * (Re_p ** 0.6)
     
-    h_sf = (Nu * k_fluid) / dp_eff if dp_eff > 0 else 0
-    a_sf = (6.0 * (1.0 - phi)) / dp_eff if dp_eff > 0 else 0
+    h_sf = (Nu * kg) / dp_eff if dp_eff > 0 else 0.0
+    a_sf = (6.0 * (1.0 - phi_eff)) / dp_eff if dp_eff > 0 else 0.0
     q_sf_coeff = h_sf * a_sf
 
-    fluid_state = {'rho': rho_fluid, 'cp': cp_fluid, 'k': k_fluid, 'mu': mu_fluid, 'rhog': rho_g, 'cpg': cp_g, 'kg': kg, 'mug': mu_g}
+    # 6. Packed Bed Pressure Drop Gradients (Ergun / Brinkman)
+    if phi_eff > 0 and (1.0 - phi_eff) > 0 and dp_eff > 0:
+        K_perm = (phi_eff**3 * (dp_eff**2)) / (150.0 * ((1.0 - phi_eff)**2))
+        beta_F = (1.75 * (1.0 - phi_eff)) / (phi_eff**3 * dp_eff)
+        dp_viscous_Pa_m = (mu_g / K_perm) * vg
+        dp_inertial_Pa_m = beta_F * rho_g * (vg**2)
+        dp_total_Pa_m = dp_viscous_Pa_m + dp_inertial_Pa_m
+    else:
+        K_perm, beta_F, dp_viscous_Pa_m, dp_inertial_Pa_m, dp_total_Pa_m = 1e-10, 0.0, 0.0, 0.0, 0.0
+
+    delta_p_total_kPa = (dp_total_Pa_m * bed_height) / 1000.0
+
+    fluid_state = {'rho': rho_g, 'cp': cp_g, 'k': kg, 'mu': mu_g}
+    hydro_state = {
+        'dp_eff': dp_eff, 'r_eff': r_eff, 'Re_m': Re_m, 'Re_p': Re_p,
+        'K_perm': K_perm, 'beta_F': beta_F,
+        'dp_viscous_Pa_m': dp_viscous_Pa_m, 'dp_inertial_Pa_m': dp_inertial_Pa_m,
+        'dp_total_Pa_m': dp_total_Pa_m, 'delta_p_total_kPa': delta_p_total_kPa
+    }
+    
     coeffs = {
         'cp': (cp_A, cp_B, cp_C), 'ks': (ks_A, ks_B, ks_C), 
         'rhog': (rhog_A, rhog_B, rhog_C, rhog_D),
-        'mu': (mu_A, mu_B, mu_C, mu_D), 'cpg': (cpg_A, cpg_B, cpg_C, cpg_D), 'kg': (kg_A, kg_B, kg_C, kg_D),
-        'rho_iron': (rho_iron_A, rho_iron_B), 'cp_iron': (cp_iron_A, cp_iron_B), 'k_iron': (k_iron_A, k_iron_B),
-        'rho_slag': (rho_slag_A, rho_slag_B), 'cp_slag': (cp_slag_A, cp_slag_B), 'k_slag': (k_slag_A, k_slag_B)
+        'mu': (mu_A, mu_B, mu_C, mu_D), 'cpg': (cpg_A, cpg_B, cpg_C, cpg_D), 'kg': (kg_A, kg_B, kg_C, kg_D)
     }
-    return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state), coeffs
+    return (cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), (Re_m, Re_p, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state), hydro_state, coeffs
 
-(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), fluid_interphase, coeffs = calculate_physics(temperature_k)
-dp_eff, Re, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state = fluid_interphase
+(cp_s, ks_s, rho_s, rho_bulk), (cp_s_eff, ks_s_eff), fluid_interphase, hydro_state, coeffs = calculate_physics(temperature_k)
+Re_m, Re_p, Pr, Nu, h_sf, a_sf, q_sf_coeff, fluid_state = fluid_interphase
 cp_A, cp_B, cp_C = coeffs['cp']
 ks_A, ks_B, ks_C = coeffs['ks']
-rhog_A, rhog_B, rhog_C, rhog_D = coeffs['rhog']
-mu_A, mu_B, mu_C, mu_D = coeffs['mu']
-cpg_A, cpg_B, cpg_C, cpg_D = coeffs['cpg']
-kg_A, kg_B, kg_C, kg_D = coeffs['kg']
 
-# --- Display Results ---
+# --- Section: 2D Spatial Heatmap & 3D Surface Mesh Visualizer ---
 st.markdown("---")
-st.subheader(f"📊 Computed Properties at T = {temperature_k:.1f} K")
+st.subheader("🌐 2D/3D Spatial Field Distribution Maps (R x Z Mesh)")
 
-tab3_header = "⚙️ Multiphase Pore Fluid Mixture & Coupling" if is_deadman else "⚙️ Single-Phase Gas Fluid Properties & Coupling"
+st.sidebar.header("🗺️ 2D & 3D Spatial Controls")
+t_bottom = st.sidebar.number_input("Tuyere / Bottom Temp (K)", value=2000.0, step=50.0)
+t_top = st.sidebar.number_input("Top Burden Temp (K)", value=400.0, step=25.0)
+radial_c_bias = st.sidebar.slider("Central Flow Temperature Bias", 0.0, 0.5, 0.2, 0.05)
+wall_porosity_bias = st.sidebar.slider("Wall Channeling Velocity Bias", 0.0, 0.6, 0.25, 0.05)
 
-tab1, tab2, tab3 = st.tabs([
-    "🟢 COMSOL LTNE: Solid Sub-Node", 
-    "🟠 COMSOL Solid Matrix (Scaled by [1-φ])",
-    tab3_header
+st.sidebar.header("🧊 3D Camera Controls")
+camera_elevation = st.sidebar.slider("Camera Elevation (°)", 0, 90, 35, 5)
+camera_azimuth = st.sidebar.slider("Camera Azimuth (°)", -180, 180, 45, 5)
+camera_distance = st.sidebar.slider("Camera Distance", 1.0, 4.0, 1.8, 0.1)
+
+# Convert polar angles to 3D Plotly eye coordinates
+ele_rad = np.radians(camera_elevation)
+azi_rad = np.radians(camera_azimuth)
+eye_x = camera_distance * np.cos(ele_rad) * np.sin(azi_rad)
+eye_y = -camera_distance * np.cos(ele_rad) * np.cos(azi_rad)
+eye_z = camera_distance * np.sin(ele_rad)
+
+camera_config = dict(eye=dict(x=eye_x, y=eye_y, z=eye_z))
+
+# Meshgrid setup
+r_vec = np.linspace(-bed_radius, bed_radius, 60)
+z_vec = np.linspace(0, bed_height, 60)
+R_grid, Z_grid = np.meshgrid(r_vec, z_vec)
+
+# 2D Analytical Fields
+Z_norm = Z_grid / bed_height
+R_norm = R_grid / bed_radius
+T_2D = t_top + (t_bottom - t_top) * (Z_norm ** 0.85) * (1.0 + radial_c_bias * np.exp(-4.0 * (R_norm ** 2)))
+V_2D = vg * (1.0 + radial_c_bias * np.exp(-3.0 * (R_norm ** 2)) + wall_porosity_bias * (R_norm ** 4)) * (T_2D / temperature_k) ** 0.5
+
+K_perm_val = max(hydro_state['K_perm'], 1e-12)
+DP_2D = ((fluid_state['mu'] / K_perm_val) * V_2D + hydro_state['beta_F'] * fluid_state['rho'] * (V_2D ** 2)) / 1000.0
+
+tab_map_T, tab_map_V, tab_map_DP, tab_3d_T, tab_3d_V = st.tabs([
+    "🔥 2D Temperature Contour", 
+    "💨 2D Velocity Contour", 
+    "📊 2D Pressure Gradient Contour",
+    "🧊 3D Temperature Surface Mesh",
+    "🧊 3D Velocity Surface Mesh"
 ])
 
-with tab1:
-    st.info("💡 **LTNE Solid Matrix (Intrinsic).** Uses True Density and pure skeletal properties.")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Void Fraction (Porosity φ)", f"{phi:.4f}")
-    col2.metric("True Density (ρ_s)", f"{rho_s:.2f} kg/m³")
-    col3.metric("Solid Conductivity (k_s)", f"{ks_s:.3f} W/(m·K)")
-    col4.metric("Solid Heat Capacity (Cp_s)", f"{cp_s:.2f} J/(kg·K)")
-    
-    st.markdown("#### Analytical Functions (T)")
-    st.latex(rf"C_{{p,s}}(T) = {cp_A:.4f} + ({cp_B:.4e})T + ({cp_C:.4e})T^{{-2}}")
-    st.latex(rf"k_s(T) = {ks_A:.4f} + ({ks_B:.4e})T + ({ks_C:.4e})T^2")
+with tab_map_T:
+    fig_contour_T = go.Figure(data=go.Contour(
+        z=T_2D, x=r_vec, y=z_vec,
+        colorscale='Hot',
+        contours=dict(coloring='heatmap', showlabels=True, labelfont=dict(size=11, color='white')),
+        colorbar=dict(title='Temp [K]')
+    ))
+    fig_contour_T.update_layout(
+        title="2D Temperature Distribution Profile T(r, z)",
+        xaxis_title="Radial Position r [m]", yaxis_title="Bed Height z [m]",
+        height=550
+    )
+    st.plotly_chart(fig_contour_T, use_container_width=True)
 
-with tab2:
-    st.info("💡 **Scaled Solid Matrix.** $C_p$ and $k$ multiplied by $(1-\phi)$ without density.")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Bulk Density (ρ_bulk)", f"{rho_bulk:.2f} kg/m³")
-    col2.metric("Effective Conductivity (k_eff = k_s · [1-φ])", f"{ks_s_eff:.3f} W/(m·K)")
-    col3.metric("Effective Specific Heat (Cp_eff = Cp_s · [1-φ])", f"{cp_s_eff:.2f} J/(kg·K)")
-    
-    st.markdown("#### Analytical Functions (T)")
-    st.latex(rf"C_{{p,eff}}(T) = (1 - {phi:.4f}) \cdot C_{{p,s}}(T)")
-    st.latex(rf"k_{{eff}}(T) = (1 - {phi:.4f}) \cdot k_s(T)")
+with tab_map_V:
+    fig_contour_V = go.Figure(data=go.Contour(
+        z=V_2D, x=r_vec, y=z_vec,
+        colorscale='Turbo',
+        contours=dict(coloring='heatmap', showlabels=True, labelfont=dict(size=11, color='white')),
+        colorbar=dict(title='Velocity [m/s]')
+    ))
+    fig_contour_V.update_layout(
+        title="2D Superficial Gas Velocity Distribution Profile v_z(r, z)",
+        xaxis_title="Radial Position r [m]", yaxis_title="Bed Height z [m]",
+        height=550
+    )
+    st.plotly_chart(fig_contour_V, use_container_width=True)
 
-with tab3:
-    if is_deadman:
-        st.info(f"💡 **Multiphase Pore Fluid Mixture evaluated at T = {temperature_k:.1f} K** (Gas + Liquid Iron + Liquid Slag).")
-    else:
-        st.info(f"💡 **Single-Phase Pore Gas evaluated at T = {temperature_k:.1f} K** (Pure Gas Phase, $s_{{gas}} = 1.0$).")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Fluid Density ρ_fluid(T)", f"{fluid_state['rho']:.3f} kg/m³")
-    col2.metric("Fluid Specific Heat Cp_fluid(T)", f"{fluid_state['cp']:.2f} J/(kg·K)")
-    col3.metric("Fluid Conductivity k_fluid(T)", f"{fluid_state['k']:.4f} W/(m·K)")
-    col4.metric("Fluid Viscosity μ_fluid(T)", f"{fluid_state['mu']:.4e} Pa·s")
+with tab_map_DP:
+    fig_contour_DP = go.Figure(data=go.Contour(
+        z=DP_2D, x=r_vec, y=z_vec,
+        colorscale='Viridis',
+        contours=dict(coloring='heatmap', showlabels=True, labelfont=dict(size=11, color='white')),
+        colorbar=dict(title='ΔP/L [kPa/m]')
+    ))
+    fig_contour_DP.update_layout(
+        title="2D Pressure Drop Gradient Profile ΔP/L(r, z)",
+        xaxis_title="Radial Position r [m]", yaxis_title="Bed Height z [m]",
+        height=550
+    )
+    st.plotly_chart(fig_contour_DP, use_container_width=True)
 
-    st.markdown("#### Dimensionless Numbers & Interphase Coupling")
-    dcol1, dcol2, dcol3 = st.columns(3)
-    dcol1.metric("Reynolds Number Re(T)", f"{Re:.1f}")
-    dcol2.metric("Prandtl Number Pr(T)", f"{Pr:.3f}")
-    dcol3.metric("Nusselt Number Nu(T)", f"{Nu:.2f}")
+with tab_3d_T:
+    fig_3d_T = go.Figure(data=[go.Surface(
+        z=T_2D, x=R_grid, y=Z_grid,
+        colorscale='Hot',
+        colorbar=dict(title='Temp [K]')
+    )])
+    fig_3d_T.update_layout(
+        title="3D Temperature Surface Mesh T(r, z)",
+        scene=dict(
+            xaxis_title="Radial Position r [m]",
+            yaxis_title="Bed Height z [m]",
+            zaxis_title="Temperature T [K]",
+            camera=camera_config
+        ),
+        height=650
+    )
+    st.plotly_chart(fig_3d_T, use_container_width=True)
 
-    st.markdown("#### Analytical Fluid Formulations in Pores")
-    if is_deadman:
-        st.latex(r"\rho_{fluid}(T) = s_{gas}\rho_g(T) + s_{iron}\rho_{iron}(T) + s_{slag}\rho_{slag}(T)")
-        st.latex(r"C_{p,fluid}(T) = s_{gas}C_{p,g}(T) + s_{iron}C_{p,iron}(T) + s_{slag}C_{p,slag}(T)")
-        st.latex(r"k_{fluid}(T) = s_{gas}k_g(T) + s_{iron}k_{iron}(T) + s_{slag}k_{slag}(T)")
-    else:
-        st.latex(rf"\rho_g(T) = {rhog_A:.4f} + ({rhog_B:.4e})T + ({rhog_C:.4e})T^2 + ({rhog_D:.4e})T^3")
-        st.latex(rf"C_{{p,g}}(T) = {cpg_A:.4f} + ({cpg_B:.4e})T + ({cpg_C:.4e})T^2 + ({cpg_D:.4e})T^3")
-        st.latex(rf"k_g(T) = {kg_A:.4f} + ({kg_B:.4e})T + ({kg_C:.4e})T^2 + ({kg_D:.4e})T^3")
-        st.latex(rf"\mu_g(T) = {mu_A:.4e} + ({mu_B:.4e})T + ({mu_C:.4e})T^2 + ({mu_D:.4e})T^3")
+with tab_3d_V:
+    fig_3d_V = go.Figure(data=[go.Surface(
+        z=V_2D, x=R_grid, y=Z_grid,
+        colorscale='Turbo',
+        colorbar=dict(title='Velocity [m/s]')
+    )])
+    fig_3d_V.update_layout(
+        title="3D Superficial Gas Velocity Surface Mesh v_z(r, z)",
+        scene=dict(
+            xaxis_title="Radial Position r [m]",
+            yaxis_title="Bed Height z [m]",
+            zaxis_title="Velocity v_z [m/s]",
+            camera=camera_config
+        ),
+        height=650
+    )
+    st.plotly_chart(fig_3d_V, use_container_width=True)
 
-# --- COMSOL Text Export Content Generator ---
-gas_export_text = f"""--------------------------------------------------------------------
-2. SINGLE-PHASE PORE GAS PROPERTIES (GRANULAR DRY BURDEN)
---------------------------------------------------------------------
-[Gas Analytical Function Expressions in Pores]
-rho_g(T)  = {rhog_A:.6f} + ({rhog_B:.6e})*T + ({rhog_C:.6e})*T^2 + ({rhog_D:.6e})*T^3
-Cp_g(T)   = {cpg_A:.6f} + ({cpg_B:.6e})*T + ({cpg_C:.6e})*T^2 + ({cpg_D:.6e})*T^3
-k_g(T)    = {kg_A:.6f} + ({kg_B:.6e})*T + ({kg_C:.6e})*T^2 + ({kg_D:.6e})*T^3
-mu_g(T)   = {mu_A:.6e} + ({mu_B:.6e})*T + ({mu_C:.6e})*T^2 + ({mu_D:.6e})*T^3
-"""
+# --- Dynamic Temperature Sweeps Section (273.15 K to 2000.0 K) ---
+st.markdown("---")
+st.subheader("📈 Dynamic Temperature Sweeps (273.15 K to 2000 K)")
 
-deadman_export_text = f"""--------------------------------------------------------------------
-2. DEADMAN ZONE MULTIPHASE PORE FLUID MIXTURE (COMSOL)
---------------------------------------------------------------------
-Gas Saturation (s_gas)   = {s_gas:.4f}
-Iron Saturation (s_iron) = {s_iron:.4f}
-Slag Saturation (s_slag) = {s_slag:.4f}
+T_sweep = np.linspace(273.15, 2000.0, 100)
+sweep_records = []
 
-[Gas Component Analytic Functions]
-rho_g(T)  = {rhog_A:.6f} + ({rhog_B:.6e})*T + ({rhog_C:.6e})*T^2 + ({rhog_D:.6e})*T^3
-Cp_g(T)   = {cpg_A:.6f} + ({cpg_B:.6e})*T + ({cpg_C:.6e})*T^2 + ({cpg_D:.6e})*T^3
-k_g(T)    = {kg_A:.6f} + ({kg_B:.6e})*T + ({kg_C:.6e})*T^2 + ({kg_D:.6e})*T^3
-mu_g(T)   = {mu_A:.6e} + ({mu_B:.6e})*T + ({mu_C:.6e})*T^2 + ({mu_D:.6e})*T^3
+for T_i in T_sweep:
+    (cp_s_i, ks_s_i, rho_s_i, rho_bulk_i), (cp_s_eff_i, ks_s_eff_i), (Re_m_i, Re_p_i, Pr_i, Nu_i, h_sf_i, a_sf_i, q_sf_coeff_i, fluid_state_i), hydro_state_i, _ = calculate_physics(T_i)
+    sweep_records.append({
+        "Temperature (K)": T_i,
+        "Cp Solid (Intrinsic)": cp_s_i,
+        "Cp Solid (Scaled [1-φ])": cp_s_eff_i,
+        "Cp Pore Fluid": fluid_state_i['cp'],
+        "k Solid (Intrinsic)": ks_s_i,
+        "k Solid (Scaled [1-φ])": ks_s_eff_i,
+        "k Pore Fluid": fluid_state_i['k'],
+        "Density Solid (True)": rho_s_i,
+        "Density Bulk": rho_bulk_i,
+        "Density Pore Fluid": fluid_state_i['rho'],
+        "Modified Reynolds (Re_m)": Re_m_i,
+        "Superficial Reynolds (Re_p)": Re_p_i,
+        "Nusselt Number (Nu)": Nu_i,
+        "Volumetric Heat Transfer Coeff (q_sf)": q_sf_coeff_i,
+        "Total Pressure Gradient (kPa/m)": hydro_state_i['dp_total_Pa_m'] / 1000.0,
+        "Viscous Drag Gradient (kPa/m)": hydro_state_i['dp_viscous_Pa_m'] / 1000.0,
+        "Inertial Drag Gradient (kPa/m)": hydro_state_i['dp_inertial_Pa_m'] / 1000.0
+    })
 
-[Mixture Fluid Property Expressions in Pores]
-rho_fluid(T) = {s_gas:.4f}*rho_g(T) + {s_iron:.4f}*rho_iron(T) + {s_slag:.4f}*rho_slag(T)
-Cp_fluid(T)  = {s_gas:.4f}*Cp_g(T) + {s_iron:.4f}*Cp_iron(T) + {s_slag:.4f}*Cp_slag(T)
-k_fluid(T)   = {s_gas:.4f}*k_g(T) + {s_iron:.4f}*k_iron(T) + {s_slag:.4f}*k_slag(T)
-mu_fluid(T)  = {s_gas:.4f}*mu_g(T) + {s_iron:.4f}*{mu_iron:.4f} + {s_slag:.4f}*{mu_slag:.4f}
-"""
+df_sweep = pd.DataFrame(sweep_records)
 
-fluid_section_text = deadman_export_text if is_deadman else gas_export_text
+sweep_tab1, sweep_tab2, sweep_tab3, sweep_tab4, sweep_tab5, sweep_tab6 = st.tabs([
+    "🔥 Specific Heat (Cp)",
+    "🌡️ Thermal Conductivity (k)",
+    "⚖️ Density (ρ)",
+    "🔄 Reynolds Numbers (Re_m vs Re_p)",
+    "♨️ Nusselt Number & Interphase HTC",
+    "💨 Ergun Pressure Gradients (ΔP/L)"
+])
 
-comsol_text = f"""====================================================================
-BLAST FURNACE MULTIPHASE MODEL EXPORT (COMSOL)
-Operating Zone: {bf_zone}
-Evaluated at Reference Temp: {temperature_k:.2f} K | Total Porosity (phi): {phi:.4f}
-====================================================================
+with sweep_tab1:
+    fig_cp = px.line(
+        df_sweep, x="Temperature (K)", 
+        y=["Cp Solid (Intrinsic)", "Cp Solid (Scaled [1-φ])", "Cp Pore Fluid"],
+        title="Specific Heat Capacity vs. Temperature",
+        labels={"value": "Specific Heat Cp [J/(kg·K)]", "variable": "Phase"}
+    )
+    fig_cp.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig_cp, use_container_width=True)
 
---------------------------------------------------------------------
-1. SOLID MATRIX SCALED PROPERTIES (Cp and k scaled by [1 - phi], no density)
---------------------------------------------------------------------
-Porosity (phi) = {phi:.4f}
-Scaling Factor = (1 - phi) = {(1.0 - phi):.4f}
+with sweep_tab2:
+    fig_k = px.line(
+        df_sweep, x="Temperature (K)", 
+        y=["k Solid (Intrinsic)", "k Solid (Scaled [1-φ])", "k Pore Fluid"],
+        title="Thermal Conductivity vs. Temperature",
+        labels={"value": "Thermal Conductivity k [W/(m·K)]", "variable": "Phase"}
+    )
+    fig_k.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig_k, use_container_width=True)
 
-[Analytic Function: Scaled Solid Specific Heat Cp_eff(T)]
-Expression: (1 - {phi:.4f}) * ({cp_A:.6f} + ({cp_B:.6e})*T + ({cp_C:.6e})*T^(-2))
+with sweep_tab3:
+    fig_rho = px.line(
+        df_sweep, x="Temperature (K)", 
+        y=["Density Solid (True)", "Density Bulk", "Density Pore Fluid"],
+        title="Phase & Bulk Densities vs. Temperature",
+        labels={"value": "Density ρ [kg/m³]", "variable": "Phase"}
+    )
+    fig_rho.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig_rho, use_container_width=True)
 
-[Analytic Function: Scaled Solid Thermal Conductivity k_eff(T)]
-Expression: (1 - {phi:.4f}) * ({ks_A:.6f} + ({ks_B:.6e})*T + ({ks_C:.6e})*T^2)
+with sweep_tab4:
+    fig_re = px.line(
+        df_sweep, x="Temperature (K)", 
+        y=["Modified Reynolds (Re_m)", "Superficial Reynolds (Re_p)"],
+        title="Modified Ergun (Re_m) vs. Superficial Particle (Re_p) Reynolds Numbers",
+        labels={"value": "Reynolds Number [-]", "variable": "Definition"}
+    )
+    fig_re.update_layout(
+        hovermode="x unified", 
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_re, use_container_width=True)
 
-{fluid_section_text}====================================================================
-"""
+with sweep_tab5:
+    col_nu, col_qsf = st.columns(2)
+    with col_nu:
+        fig_nu = px.line(
+            df_sweep, x="Temperature (K)", y="Nusselt Number (Nu)",
+            title="Interphase Nusselt Number (Nu) vs. Temperature",
+            labels={"Nusselt Number (Nu)": "Nusselt Number Nu [-]"}
+        )
+        fig_nu.update_layout(hovermode="x unified")
+        st.plotly_chart(fig_nu, use_container_width=True)
+    with col_qsf:
+        fig_qsf = px.line(
+            df_sweep, x="Temperature (K)", y="Volumetric Heat Transfer Coeff (q_sf)",
+            title="Volumetric Interphase Coeff (q_sf/ΔT) vs. Temperature",
+            labels={"Volumetric Heat Transfer Coeff (q_sf)": "q_sf [W/(m³·K)]"}
+        )
+        fig_qsf.update_layout(hovermode="x unified")
+        st.plotly_chart(fig_qsf, use_container_width=True)
 
-st.download_button(
-    label="📥 Download Temperature-Dependent COMSOL Variables (.txt)",
-    data=comsol_text,
-    file_name=f"COMSOL_BF_{bf_zone.split()[0]}_Thermophysical_Functions.txt",
-    mime="text/plain"
-)
+with sweep_tab6:
+    fig_dp = px.line(
+        df_sweep, x="Temperature (K)", 
+        y=["Total Pressure Gradient (kPa/m)", "Viscous Drag Gradient (kPa/m)", "Inertial Drag Gradient (kPa/m)"],
+        title="Ergun & Brinkman Pressure Drop Gradient (ΔP/L) vs. Temperature",
+        labels={"value": "Pressure Gradient ΔP/L [kPa/m]", "variable": "Component"}
+    )
+    fig_dp.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig_dp, use_container_width=True)
